@@ -1,7 +1,7 @@
 package version
 
 // Version is the release version (override with -ldflags).
-var Version = "1.2.5"
+var Version = "1.2.6"
 
 // BuildTime can be injected via ldflags.
 var BuildTime = "dev"

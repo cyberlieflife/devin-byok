@@ -504,7 +504,7 @@ async function saveUpdatePrefs(){
 
 // ===== 底栏更新状态 + 弹窗 + 进度 =====
 // 与 internal/version.Version 保持一致（硬编码兜底，避免接口未就绪显示 v?）
-const APP_VERSION = '1.2.5';
+const APP_VERSION = '1.2.6';
 let __lastUpdateCheck = null;
 let __updateProgressTimer = null;
 let __updateModalForced = false;
