@@ -1,0 +1,20 @@
+﻿# secrets & local
+config.yaml
+work/
+dist/
+*.exe
+*.exe~
+*.vsix
+*.zip
+*.sha256
+
+# ide / os
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.bak_*
+*.log
+
+# go
+/vendor/

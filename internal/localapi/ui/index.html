@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Devin BYOK</title>
+<link rel="stylesheet" href="/ui/app.css"/>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <div class="logo">BYOK</div>
+      <div>
+        <div class="title">Devin BYOK</div>
+        <div class="sub">Monitor · Models · Settings</div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="pill" id="apiPill"><i class="dot" id="apiDot"></i><span id="apiText">检测中</span></span>
+      <button class="btn btn-secondary" id="btnSettings" onclick="showPage('settings')">设置</button>
+      <button class="btn btn-primary" onclick="showPage('monitor')">监控</button>
+      <button class="btn btn-secondary" onclick="showPage('models')">模型</button>
+    </div>
+  </header>
+
+  <!-- MONITOR -->
+  <main id="page-monitor" class="page active">
+    <section class="hero">
+      <h1>运行监控</h1>
+      <p class="muted">请求、缓存、Token 与模型使用一览</p>
+    </section>
+    <div class="stat-grid">
+      <div class="card stat">
+        <div class="label">请求成功</div>
+        <div class="value ok" id="mOk">0</div>
+      </div>
+      <div class="card stat">
+        <div class="label">请求失败</div>
+        <div class="value bad" id="mFail">0</div>
+      </div>
+      <div class="card stat">
+        <div class="label">Token 输入≈</div>
+        <div class="value" id="mTin">0</div>
+      </div>
+      <div class="card stat">
+        <div class="label">Token 输出≈</div>
+        <div class="value" id="mTout">0</div>
+      </div>
+    </div>
+    <div class="two-col">
+      <div class="card">
+        <div class="card-h">Prompt 缓存命中率</div>
+        <div class="pie-wrap">
+          <canvas id="pieCache" width="180" height="180"></canvas>
+          <div class="pie-center"><div id="pieRate">0%</div><div class="muted small">cached/prompt</div></div>
+        </div>
+        <div class="muted small" id="cacheDetail">hit 0 / miss 0</div>
+      </div>
+      <div class="card">
+        <div class="card-h">模型使用排行</div>
+        <div id="modelRank" class="rank-list muted">暂无数据</div>
+      </div>
+    </div>
+    
+    <div class="two-col" style="margin-top:12px">
+      <div class="card">
+        <div class="card-h">功能调用</div>
+        <div class="stat-grid" style="grid-template-columns:1fr 1fr;gap:8px">
+          <div><div class="label">DeepWiki 成功</div><div class="value ok" id="mDeepWiki">0</div></div>
+          <div><div class="label">DeepWiki 失败</div><div class="value bad" id="mDeepWikiFail">0</div></div>
+          <div><div class="label">CodeMap 成功</div><div class="value ok" id="mCodeMap">0</div></div>
+          <div><div class="label">CodeMap 失败</div><div class="value bad" id="mCodeMapFail">0</div></div>
+          <div><div class="label">CodeMap Fast</div><div class="value" id="mCodeMapFast">0</div></div>
+          <div><div class="label">CodeMap Smart</div><div class="value" id="mCodeMapSmart">0</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-h">功能模型排行</div>
+        <div id="featureModelRank" class="rank-list muted">暂无数据</div>
+      </div>
+    </div>
+
+    <div class="card log-card">
+      <div class="card-h row-between">
+        <span>实时日志</span>
+        <span class="muted small" id="uptime">uptime —</span>
+      </div>
+      <div id="logBox" class="log-box mono"></div>
+    </div>
+    <div class="row gap">
+      <button class="btn btn-primary" onclick="control('start')">启动服务</button>
+      <button class="btn btn-danger" onclick="control('stop')">停止服务</button>
+      <button class="btn btn-secondary" onclick="refreshAll()">刷新</button>
+    </div>
+  </main>
+
+  <!-- MODELS -->
+  <main id="page-models" class="page">
+    <section class="hero row-between">
+      <div>
+        <h1>模型配置</h1>
+        <p class="muted">按 Family 卡片管理 · 可一键生成思考强度变体</p>
+      </div>
+      <button class="btn btn-primary" onclick="openFamilyModal()">+ 添加 Family</button>
+    </section>
+    <div class="card feature-model-card">
+      <div class="card-h">功能模型绑定</div>
+      <p class="muted small">DeepWiki 与 CodeMap（Fast / Smart）各自绑定下方已有模型变体；保存后热重载。若此处不可见请重启 devin-byok 服务。</p>
+      <div class="feature-bind-grid">
+        <div class="feature-bind">
+          <div class="feature-bind-title">DeepWiki</div>
+          <div class="field">
+            <label>模型（思考强度变体）</label>
+            <select id="deepwiki_model"></select>
+          </div>
+          <div class="muted small" id="deepwiki_hint">生效：-</div>
+        </div>
+        <div class="feature-bind">
+          <div class="feature-bind-title">CodeMap · Fast</div>
+          <div class="field">
+            <label>快速模式模型</label>
+            <select id="codemap_fast_model"></select>
+          </div>
+          <div class="muted small" id="codemap_fast_hint">生效：-</div>
+        </div>
+        <div class="feature-bind">
+          <div class="feature-bind-title">CodeMap · Smart</div>
+          <div class="field">
+            <label>智能模式模型</label>
+            <select id="codemap_smart_model"></select>
+          </div>
+          <div class="muted small" id="codemap_smart_hint">生效：-</div>
+        </div>
+      </div>
+      <div class="row gap" style="margin-top:8px">
+        <button class="btn btn-primary" onclick="saveFeatureModels()">保存绑定</button>
+        <span class="muted small" id="featureModelResult"></span>
+      </div>
+    </div>
+    <div id="familyCards" class="family-grid"></div>
+  </main>
+
+  <!-- SETTINGS -->
+  <main id="page-settings" class="page">
+    <section class="hero">
+      <h1>设置</h1>
+      <p class="muted">供应商以外的运行策略（工具 / 流式 / 超时）</p>
+    </section>
+    <div class="two-col">
+      <div class="card">
+        <div class="card-h">说明</div>
+        <p class="muted">供应商（Base URL / API Key / 上游模型名）已改为在 <b>模型 → Family 卡片</b> 内配置，与 cursor-byok 一致：多模型，每个模型自带供应商。</p>
+        <div class="field"><label>全局默认超时 timeout_sec（Family 未单独设置时使用）</label><input id="timeout_sec" type="number"/></div>
+        <div class="row gap">
+          <button class="btn btn-primary" onclick="saveConfig()">保存策略</button>
+        </div>
+        <div class="muted small" id="upResult" style="margin-top:10px"></div>
+      </div>
+      <div class="card">
+        <div class="card-h">功能策略</div>
+        <div class="field"><label>tools.mode</label>
+          <select id="tools_mode">
+            <option value="off">off</option>
+            <option value="readonly">readonly</option>
+            <option value="standard">standard</option>
+            <option value="full">full</option>
+          </select>
+        </div>
+        <div class="field"><label>tools.timeout_sec</label><input id="tools_timeout_sec" type="number"/></div>
+        <label class="check"><input type="checkbox" id="enable_stream"/> 流式输出</label>
+        <label class="check"><input type="checkbox" id="enable_cascade_tools"/> Cascade 工具</label>
+        <label class="check"><input type="checkbox" id="pure_local"/> 纯本地 pure_local</label>
+        <div class="row gap" style="margin-top:12px">
+          <button class="btn btn-primary" onclick="saveConfig()">保存策略</button>
+        </div>
+        <div class="muted small" id="cfgPath" style="margin-top:12px"></div>
+      </div>
+    </div>
+  
+    <div class="card" style="margin-top:16px">
+      <div class="card-h">桌面与自启</div>
+      <p class="muted small">开机自启、启动最小化到托盘、最小化时托盘化（请用 devin-byok-gui.exe）。服务 start 会自动 apply，stop 会自动 restore。</p>
+      <label class="check"><input type="checkbox" id="desktop_autostart"/> 开机自动启动服务（start + apply）</label>
+      <label class="check"><input type="checkbox" id="desktop_start_minimized"/> 启动 GUI 时最小化到托盘</label>
+      <label class="check"><input type="checkbox" id="desktop_minimize_to_tray"/> 最小化窗口时隐藏到托盘</label>
+      <div class="row gap" style="margin-top:12px">
+        <button class="btn btn-primary" onclick="saveDesktopPrefs()">保存桌面设置</button>
+        <button class="btn btn-secondary" onclick="hideToTray()">立即隐藏到托盘</button>
+        <span class="muted small" id="desktopResult"></span>
+      </div>
+    </div>
+
+  
+    <div class="card" style="margin-top:16px">
+      <div class="card-h">更新</div>
+      <p class="muted small">从 GitHub Releases 检查新版本。自动更新会下载 zip、校验 SHA256（若有）并替换 exe 后重启。</p>
+      <div class="muted small" id="updateStatus">当前版本加载中…</div>
+      <label class="check"><input type="checkbox" id="update_enabled"/> 启用在线检查</label>
+      <label class="check"><input type="checkbox" id="update_auto_apply"/> 检查到更新后自动应用（谨慎）</label>
+      <div class="field"><label>GitHub 仓库 owner/name</label><input id="update_repo" placeholder="cyberlieflife/devin-byok"/></div>
+      <div class="row gap">
+        <button class="btn btn-secondary" id="btnCheckUpdate" onclick="checkUpdate()">检查更新</button>
+        <button class="btn btn-primary" id="btnApplyUpdate" onclick="applyUpdate()">下载并更新</button>
+        <span class="muted small" id="updateResult"></span>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- modal -->
+<div class="modal-mask" id="familyModal" hidden>
+  <div class="modal card">
+    <div class="card-h">Family 预设</div>
+    <div class="field"><label>显示名 Label</label><input id="f_label" placeholder="Grok 4.5 BYOK"/></div>
+    <div class="field"><label>Family UID</label><input id="f_uid" placeholder="grok-4.5-byok"/></div>
+    <div class="field"><label>供应商类型</label>
+      <select id="f_provider"><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic</option></select>
+    </div>
+    <div class="field"><label>Base URL</label><input id="f_base" placeholder="http://localhost:8317/v1"/></div>
+    <div class="field"><label>API Key（留空则不修改已有 Key）</label><input id="f_key" type="password" placeholder="sk-..."/></div>
+    <div class="field"><label>上游模型名 model id</label><input id="f_upstream" placeholder="grok-4.5"/></div>
+    <div class="field"><label>context_window</label><input id="f_ctx" type="number" value="128000"/></div>
+    <div class="field"><label>max_tokens（输出）</label><input id="f_max" type="number" value="8192"/></div>
+    <div class="field"><label>思考强度（逗号分隔）</label><input id="f_levels" value="low,medium,high"/></div>
+    <div class="row gap">
+      <button class="btn btn-primary" onclick="saveFamily()">保存 Family</button>
+      <button class="btn btn-secondary" onclick="closeFamilyModal()">取消</button>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+<script src="/ui/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,494 @@
+
+let currentPage = 'monitor';
+
+async function jget(url){const r=await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json()}
+async function jsend(url, method, body){
+  const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+  const t=await r.text(); let data; try{data=JSON.parse(t)}catch{data={raw:t}}
+  if(!r.ok) throw new Error(data.error||data.message||t||r.statusText);
+  return data;
+}
+function toast(msg){const el=document.getElementById('toast'); el.textContent=msg; el.style.display='block'; setTimeout(()=>el.style.display='none',2800)}
+function showPage(name){
+  currentPage=name;
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById('page-'+name).classList.add('active');
+  if(name==='models') refreshFamilies();
+  if(name==='settings'){ refreshConfig(); refreshDesktopPrefs(); }
+}
+function setDot(ok,text){
+  const d=document.getElementById('apiDot'); const t=document.getElementById('apiText');
+  d.className='dot '+(ok?'ok':'bad'); t.textContent=text;
+}
+function drawPie(hit, miss){
+  const c=document.getElementById('pieCache'); const ctx=c.getContext('2d');
+  const total=hit+miss; const rate=total?hit/total:0;
+  document.getElementById('pieRate').textContent=Math.round(rate*100)+'%';
+  document.getElementById('cacheDetail').textContent=`cached ${hit} / prompt ${miss}`;
+  ctx.clearRect(0,0,c.width,c.height);
+  const cx=90,cy=90,r=78;
+  // track
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.strokeStyle='#efeee8'; ctx.lineWidth=16; ctx.stroke();
+  if(total>0){
+    const start=-Math.PI/2; const end=start+rate*Math.PI*2;
+    ctx.beginPath(); ctx.arc(cx,cy,r,start,end); ctx.strokeStyle='#f54e00'; ctx.lineWidth=16; ctx.lineCap='round'; ctx.stroke();
+  }
+}
+function renderFeatureRank(list){
+  const el=document.getElementById('featureModelRank');
+  if(!el) return;
+  if(!list||!list.length){el.innerHTML='<div class="muted">暂无数据</div>';return;}
+  const max=Math.max(...list.map(x=>x.count||0),1);
+  el.innerHTML=list.slice(0,12).map((x,i)=>`<div class="rank-item"><span class="rank-n">${i+1}</span><span class="mono">${escapeHtml(x.model||'')}</span><div class="rank-bar"><i style="width:${Math.round((x.count||0)*100/max)}%"></i></div><span>${x.count||0}</span></div>`).join('');
+}
+function renderRank(list){
+  const el=document.getElementById('modelRank');
+  if(!list||!list.length){el.innerHTML='<div class="muted">暂无数据</div>'; return}
+  const max=Math.max(...list.map(x=>x.count||0),1);
+  el.innerHTML=list.slice(0,8).map((x,i)=>`
+    <div class="rank-item">
+      <span class="rank-n">${i+1}</span>
+      <div style="flex:1">
+        <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:4px">
+          <span class="mono">${escapeHtml(x.model||'')}</span>
+          <span class="muted">${x.count}</span>
+        </div>
+        <div class="rank-bar"><i style="width:${Math.round((x.count/max)*100)}%"></i></div>
+      </div>
+    </div>`).join('');
+}
+function renderLogs(logs){
+  const box=document.getElementById('logBox');
+  if(!box) return;
+  if(!logs||!logs.length){box.innerHTML='<div class="muted">等待日志…</div>'; return}
+  // 命令行风格：正序展示，新日志在底部；取最后 120 条
+  const arr = logs.length>120 ? logs.slice(logs.length-120) : logs;
+  const atBottom = (box.scrollTop + box.clientHeight) >= (box.scrollHeight - 24);
+  box.innerHTML=arr.map(l=>{
+    const lv=(l.level||'info').toLowerCase();
+    return `<div class="log-line ${lv==='error'||lv==='err'?'err':'info'}"><span class="t">${escapeHtml(l.time||'')}</span>${escapeHtml(l.message||'')}</div>`;
+  }).join('');
+  // 用户未上滚查看历史时，自动贴底
+  if(atBottom || box.dataset.forceBottom==='1' || !box.dataset.inited){
+    box.scrollTop = box.scrollHeight;
+    box.dataset.inited='1';
+  }
+}
+
+async function refreshMetrics(){
+  try{
+    if(typeof window.nativeOnline==='function' && !(await window.nativeOnline())){ setDot(false,'API 离线'); return }
+    const m=await jget('/api/metrics');
+    document.getElementById('mOk').textContent=m.req_ok??0;
+    document.getElementById('mFail').textContent=m.req_fail??0;
+    document.getElementById('mTin').textContent=m.tokens_in??0;
+    document.getElementById('mTout').textContent=m.tokens_out??0;
+    const elDW=document.getElementById('mDeepWiki'); if(elDW) elDW.textContent=m.deepwiki_ok??0;
+    const elDWf=document.getElementById('mDeepWikiFail'); if(elDWf) elDWf.textContent=m.deepwiki_fail??0;
+    const elCM=document.getElementById('mCodeMap'); if(elCM) elCM.textContent=m.codemap_ok??0;
+    const elCMf=document.getElementById('mCodeMapFail'); if(elCMf) elCMf.textContent=m.codemap_fail??0;
+    const elF=document.getElementById('mCodeMapFast'); if(elF) elF.textContent=m.codemap_fast??0;
+    const elS=document.getElementById('mCodeMapSmart'); if(elS) elS.textContent=m.codemap_smart??0;
+    renderFeatureRank(m.feature_model_rank||[]);
+    const prompt=m.prompt_tokens||0, cached=m.cached_tokens||0;
+    if(prompt>0){ drawPie(cached, Math.max(prompt-cached,0)); document.getElementById('cacheDetail').textContent=`cached ${cached} / prompt ${prompt}`; }
+    else { drawPie(m.cache_hit||0, m.cache_miss||0); document.getElementById('cacheDetail').textContent=`local hit ${m.cache_hit||0} / miss ${m.cache_miss||0}`; }
+    renderRank(m.model_rank||[]);
+    renderLogs(m.logs||[]);
+    document.getElementById('uptime').textContent='uptime '+fmtDur(m.uptime_sec||0);
+    setDot(true,'API 在线');
+  }catch(e){
+    setDot(false,'API 离线');
+  }
+}
+async function refreshStatus(){
+  try{
+    const s=await jget('/api/status');
+    setDot(true,'API 在线');
+    document.getElementById('cfgPath').textContent='config: '+(s.config_path||'-');
+  }catch(e){ setDot(false,'API 离线') }
+}
+async function refreshConfig(){
+  refreshDesktopPrefs();
+  try{
+    const c=await jget('/api/config');
+    const ue=document.getElementById('update_enabled'); if(ue && c.update_enabled!=null) ue.checked=!!c.update_enabled;
+    const ua=document.getElementById('update_auto_apply'); if(ua && c.update_auto_apply!=null) ua.checked=!!c.update_auto_apply;
+    const ur=document.getElementById('update_repo'); if(ur && c.update_repo!=null) ur.value=c.update_repo||'';
+    const us=document.getElementById('updateStatus');
+    if(us){ try{ const v=await jget('/api/version'); us.textContent='当前版本 v'+(v.version||'?'); }catch(_e){} }
+  }catch(_e){}
+
+  try{
+    const c=await jget('/api/config');
+    const to=document.getElementById('timeout_sec'); if(to) to.value=c.timeout_sec||120;
+    fillFeatureModelSelects(c.models||window.__models||[], c);
+    document.getElementById('tools_mode').value=c.tools_mode||'standard';
+    document.getElementById('tools_timeout_sec').value=c.tools_timeout_sec??300;
+    document.getElementById('enable_stream').checked=!!c.enable_stream;
+    document.getElementById('enable_cascade_tools').checked=!!c.enable_cascade_tools;
+    document.getElementById('pure_local').checked=!!c.pure_local;
+    document.getElementById('cfgPath').textContent='config: '+(c.config_path||'-');
+  }catch(e){}
+}
+window.__fams={};
+async function refreshFamilies(){
+  try{ const cfg=await jget('/api/config'); fillFeatureModelSelects(cfg.models||[], cfg);}catch(_e){}
+
+  const box=document.getElementById('familyCards');
+  try{
+    const res=await jget('/api/families');
+    const fams=res.families||[];
+    window.__fams={};
+    fams.forEach(f=>{window.__fams[f.uid]=f});
+    if(!fams.length){box.innerHTML='<div class="card muted">还没有 Family，点击右上角添加</div>'; return}
+    box.innerHTML=fams.map(f=>`
+      <div class="card family-card">
+        <h3>${escapeHtml(f.label||f.uid)}</h3>
+        <div class="muted small mono">${escapeHtml(f.uid)}</div>
+        <div class="muted small" style="margin-top:6px">${escapeHtml(f.provider||'openai')} · ctx ${f.context_window||'-'} · max_out ${f.max_tokens||'-'}</div>
+        <div class="muted small mono" style="margin-top:4px">${escapeHtml(f.base_url||'(no base_url)')}</div>
+        <div class="muted small">key: ${f.api_key_set?(f.api_key_masked||'****'):'未设置'} · model: ${escapeHtml(f.upstream_model||'-')}</div>
+        <div class="chip-row">
+          ${(f.variants||[]).map(v=>`<span class="chip ${v.thinking==='medium'?'med':''}">${escapeHtml(v.thinking||'?')} · ${escapeHtml(v.id)}</span>`).join('')}
+        </div>
+        <div class="muted small">upstream: ${escapeHtml((f.variants&&f.variants[0]&&f.variants[0].upstream_model)||'-')}</div>
+        <div class="row gap" style="margin-top:12px">
+          <button class="btn btn-secondary" onclick="editFamilyByUid('${escapeHtml(f.uid)}')">编辑</button>
+          <button class="btn btn-danger" onclick="deleteFamily('${escapeHtml(f.uid)}')">删除</button>
+        </div>
+      </div>`).join('');
+  }catch(e){box.innerHTML='<div class="card bad">加载失败: '+escapeHtml(e.message)+'</div>'}
+}
+function formPatch(){
+  return {
+    timeout_sec:Number((document.getElementById('timeout_sec')||{}).value||0),
+    tools_mode:document.getElementById('tools_mode').value,
+    tools_timeout_sec:Number(document.getElementById('tools_timeout_sec').value||0),
+    enable_stream:document.getElementById('enable_stream').checked,
+    update_enabled: !!(document.getElementById('update_enabled')||{}).checked,
+      update_auto_apply: !!(document.getElementById('update_auto_apply')||{}).checked,
+      update_repo: ((document.getElementById('update_repo')||{}).value||'').trim(),
+      enable_cascade_tools:document.getElementById('enable_cascade_tools').checked,
+    pure_local:document.getElementById('pure_local').checked,
+  };
+}
+async function saveConfig(){
+  try{ const res=await jsend('/api/config','PUT',formPatch()); toast(res.message||'已保存'); await refreshAll(); }
+  catch(e){ toast('保存失败: '+e.message) }
+}
+async function testUpstream(){
+  const el=document.getElementById('upResult'); el.textContent='测试中…';
+  try{
+    const res=await jsend('/api/test-upstream','POST');
+    el.textContent=res.ok?('OK '+ (res.text||'')):('FAIL '+(res.error||''));
+    toast(res.ok?'上游正常':(res.error||'失败'));
+  }catch(e){ el.textContent=e.message; toast(e.message) }
+}
+async function control(action){
+  try{
+    // 优先原生绑定（API 已停也能 start）
+    if(action==='start' && typeof window.nativeStart==='function'){
+      const msg = await window.nativeStart();
+      toast(msg==='ok'?'服务已启动':msg);
+      await waitOnline(8000);
+      await refreshAll();
+      return;
+    }
+    if(action==='stop' && typeof window.nativeStop==='function'){
+      // 先尽量走 API 优雅停（保存计数/清日志）；native 内部也会优先 HTTP
+      try{ await jsend('/api/control/stop','POST'); }catch(_e){}
+      const msg = await window.nativeStop();
+      toast('服务已停止（日志已清空，计数已保留）');
+      setDot(false,'API 离线');
+      // 日志区清空展示
+      const box=document.getElementById('logBox');
+      if(box) box.innerHTML='<div class="muted">服务已停止，日志已清空。计数/命中率已保留。</div>';
+      return;
+    }
+    const res=await jsend('/api/control/'+action,'POST');
+    toast(res.message||action);
+    if(action==='stop'){
+      setDot(false,'API 离线');
+      const box=document.getElementById('logBox');
+      if(box) box.innerHTML='<div class="muted">服务已停止，日志已清空。计数/命中率已保留。</div>';
+      return;
+    }
+    await waitOnline(8000);
+    await refreshAll();
+  }catch(e){
+    // 离线时 start 再试 native
+    if(action==='start' && typeof window.nativeStart==='function'){
+      try{
+        const msg=await window.nativeStart();
+        toast(msg==='ok'?'服务已启动':msg);
+        await waitOnline(8000);
+        await refreshAll();
+        return;
+      }catch(e2){ toast(String(e2)); return }
+    }
+    toast(String(e.message||e));
+  }
+}
+function waitOnline(ms){
+  const t0=Date.now();
+  return new Promise(async (resolve)=>{
+    while(Date.now()-t0<ms){
+      try{
+        if(typeof window.nativeOnline==='function'){
+          if(await window.nativeOnline()){ resolve(true); return }
+        }else{
+          const r=await fetch('/healthz'); if(r.ok){ resolve(true); return }
+        }
+      }catch(_e){}
+      await new Promise(r=>setTimeout(r,200));
+    }
+    resolve(false);
+  });
+}
+function openFamilyModal(){
+  document.getElementById('f_label').value='';
+  document.getElementById('f_uid').value='';
+  document.getElementById('f_provider').value='openai';
+  document.getElementById('f_base').value='';
+  document.getElementById('f_key').value='';
+  document.getElementById('f_upstream').value='';
+  document.getElementById('f_ctx').value=128000;
+  document.getElementById('f_max').value=8192;
+  document.getElementById('f_levels').value='low,medium,high';
+  document.getElementById('familyModal').hidden=false;
+}
+function closeFamilyModal(){ document.getElementById('familyModal').hidden=true }
+function editFamilyByUid(uid){ const f=window.__fams[uid]; if(!f){toast('family 不存在');return;} editFamily(f);}
+function editFamily(f){
+  document.getElementById('f_label').value=f.label||'';
+  document.getElementById('f_uid').value=f.uid||'';
+  document.getElementById('f_provider').value=f.provider||'openai';
+  document.getElementById('f_base').value=f.base_url||'';
+  document.getElementById('f_key').value='';
+  document.getElementById('f_key').placeholder=f.api_key_set?('当前: '+(f.api_key_masked||'****')):'未设置';
+  document.getElementById('f_upstream').value=f.upstream_model||(f.variants&&f.variants[0]&&f.variants[0].upstream_model)||'';
+  document.getElementById('f_ctx').value=f.context_window||128000;
+  document.getElementById('f_max').value=f.max_tokens||8192;
+  const levels=(f.variants||[]).map(v=>v.thinking).filter(Boolean);
+  document.getElementById('f_levels').value=levels.length?levels.join(','):'low,medium,high';
+  document.getElementById('familyModal').hidden=false;
+}
+async function saveFamily(){
+  const body={
+    label:document.getElementById('f_label').value.trim(),
+    uid:document.getElementById('f_uid').value.trim(),
+    provider:document.getElementById('f_provider').value,
+    base_url:document.getElementById('f_base').value.trim(),
+    api_key:document.getElementById('f_key').value.trim(),
+    upstream_model:document.getElementById('f_upstream').value.trim(),
+    context_window:Number(document.getElementById('f_ctx').value||0),
+    max_tokens:Number(document.getElementById('f_max').value||0),
+    levels:document.getElementById('f_levels').value.split(',').map(s=>s.trim()).filter(Boolean),
+  };
+  if(!body.label){ toast('请填写 Label'); return }
+  try{
+    await jsend('/api/families','POST',body);
+    toast('Family 已保存');
+    closeFamilyModal();
+    refreshFamilies();
+  }catch(e){ toast(e.message) }
+}
+async function deleteFamily(uid){
+  if(!confirm('删除 family '+uid+' 及其所有思考强度变体？')) return;
+  try{
+    await jsend('/api/families?uid='+encodeURIComponent(uid),'DELETE');
+    toast('已删除'); refreshFamilies();
+  }catch(e){ toast(e.message) }
+}
+function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function fmtDur(sec){const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60; return (h?h+'h ':'')+(m?m+'m ':'')+s+'s'}
+
+// ---- DeepWiki / CodeMap Fast/Smart 模型绑定 ----
+function modelOptionLabel(m){
+  const fam = m.family || m.family_uid || '';
+  const th = m.thinking || '';
+  const label = m.label || m.id || '';
+  const parts = [];
+  if(fam) parts.push(fam);
+  if(th) parts.push(th);
+  if(label && label!==fam) parts.push(label);
+  return (parts.join(' · ') || m.id) + '  (' + (m.id||'') + ')';
+}
+function fillOneModelSelect(selId, cur, list){
+  const sel = document.getElementById(selId);
+  if(!sel) return;
+  let html = '<option value="">（默认模型）</option>';
+  for(const m of list){
+    const id = m.id || '';
+    if(!id) continue;
+    const selected = id===cur ? ' selected' : '';
+    html += '<option value="'+escapeHtml(id)+'"'+selected+'>'+escapeHtml(modelOptionLabel(m))+'</option>';
+  }
+  sel.innerHTML = html;
+  if(cur && ![...sel.options].some(o=>o.value===cur)){
+    sel.innerHTML = '<option value="'+escapeHtml(cur)+'" selected>'+escapeHtml(cur)+' （已配置，列表中不存在）</option>' + sel.innerHTML;
+  }
+}
+function fillFeatureModelSelects(models, cfg){
+  const list = Array.isArray(models) ? models.slice() : [];
+  const thOrder = {none:0,minimal:1,low:2,medium:3,high:4,xhigh:5,max:6};
+  list.sort((a,b)=>{
+    const fa=(a.family_uid||a.family||'').localeCompare(b.family_uid||b.family||'');
+    if(fa!==0) return fa;
+    const ta = thOrder[String(a.thinking||'').toLowerCase()];
+    const tb = thOrder[String(b.thinking||'').toLowerCase()];
+    const ta2 = (ta===undefined?50:ta), tb2=(tb===undefined?50:tb);
+    if(ta2!==tb2) return ta2-tb2;
+    return String(a.id||'').localeCompare(String(b.id||''));
+  });
+  window.__models = list;
+  const def = (cfg && cfg.default_model) || '';
+  const pairs = [
+    ['deepwiki_model', (cfg&& (cfg.deepwiki_model||cfg.deepwiki_model_resolved)) || def, 'deepwiki_hint', (cfg&&cfg.deepwiki_model_resolved)||def],
+    ['codemap_fast_model', (cfg&& (cfg.codemap_fast_model||cfg.codemap_fast_model_resolved||cfg.codemap_model)) || def, 'codemap_fast_hint', (cfg&&cfg.codemap_fast_model_resolved)||def],
+    ['codemap_smart_model', (cfg&& (cfg.codemap_smart_model||cfg.codemap_smart_model_resolved||cfg.codemap_model)) || def, 'codemap_smart_hint', (cfg&&cfg.codemap_smart_model_resolved)||def],
+  ];
+  // 兼容旧页面可能仍有 codemap_model 单选
+  if(document.getElementById('codemap_model')){
+    pairs.push(['codemap_model', (cfg&& (cfg.codemap_model||cfg.codemap_model_resolved)) || def, 'codemap_hint', (cfg&&cfg.codemap_model_resolved)||def]);
+  }
+  for(const [selId, cur, hintId, resolved] of pairs){
+    fillOneModelSelect(selId, cur||'', list);
+    const hint = document.getElementById(hintId);
+    if(hint) hint.textContent = '生效: ' + (resolved||cur||def||'-');
+  }
+}
+async function saveFeatureModels(){
+  const val = (id)=> ((document.getElementById(id)||{}).value || '').trim();
+  const body = {
+    deepwiki_model: val('deepwiki_model'),
+    codemap_fast_model: val('codemap_fast_model'),
+    codemap_smart_model: val('codemap_smart_model'),
+    // 兼容：旧 codemap_model 同步为 smart
+    codemap_model: val('codemap_smart_model') || val('codemap_model'),
+  };
+  try{
+    await jsend('/api/config','PUT', body);
+    const el=document.getElementById('featureModelResult');
+    if(el) el.textContent = '已保存';
+    toast('功能模型绑定已保存');
+    await refreshConfig();
+  }catch(e){
+    const el=document.getElementById('featureModelResult');
+    if(el) el.textContent = e.message||String(e);
+    toast(e.message||String(e));
+  }
+}
+
+
+async function refreshDesktopPrefs(){
+  try{
+    const d = await jget('/api/desktop');
+    const a=document.getElementById('desktop_autostart'); if(a) a.checked=!!d.autostart;
+    const s=document.getElementById('desktop_start_minimized'); if(s) s.checked=!!d.start_minimized;
+    const m=document.getElementById('desktop_minimize_to_tray'); if(m) m.checked=!!d.minimize_to_tray;
+  }catch(_e){}
+}
+async function saveDesktopPrefs(){
+  const body={
+    autostart: !!(document.getElementById('desktop_autostart')||{}).checked,
+    start_minimized: !!(document.getElementById('desktop_start_minimized')||{}).checked,
+    minimize_to_tray: !!(document.getElementById('desktop_minimize_to_tray')||{}).checked,
+  };
+  try{
+    await jsend('/api/desktop','PUT', body);
+    const el=document.getElementById('desktopResult'); if(el) el.textContent='已保存';
+    toast('桌面设置已保存');
+  }catch(e){
+    const el=document.getElementById('desktopResult'); if(el) el.textContent=e.message||String(e);
+    toast(e.message||String(e));
+  }
+}
+function hideToTray(){
+  if(typeof window.nativeHideToTray==='function'){
+    window.nativeHideToTray();
+    toast('已隐藏到托盘');
+  }else{
+    toast('请使用 devin-byok-gui.exe（浏览器模式无托盘）');
+  }
+}
+
+
+async function refreshUpdatePrefs(){
+  try{
+    const c = await jget('/api/config');
+    // version
+    try{
+      const v = await jget('/api/version');
+      const el = document.getElementById('updateStatus');
+      if(el) el.textContent = '当前版本 v'+(v.version||'?')+(v.build_time?(' · build '+v.build_time):'');
+    }catch(_e){}
+    // update fields may come from dedicated endpoint later; use /api/status not enough
+  }catch(_e){}
+  try{
+    // load from a lightweight check that includes config: embed in desktop or version
+    const st = await jget('/api/update/check');
+    // if disabled, still show
+    const en = document.getElementById('update_enabled');
+    // fetch config raw - extend handleAPIConfig later; for now read check message
+  }catch(_e){}
+}
+async function loadUpdateConfig(){
+  try{
+    const c = await jget('/api/config');
+    // fields added below in config get
+  }catch(_e){}
+}
+async function checkUpdate(){
+  const el=document.getElementById('updateResult');
+  if(el) el.textContent='检查中…';
+  try{
+    const r = await jget('/api/update/check');
+    const msg = r.message || '';
+    let text = '当前 '+(r.current||'?')+' / 最新 '+(r.latest||'?')+' — '+msg;
+    if(r.release_url) text += ' · '+r.release_url;
+    if(el) el.textContent = text;
+    if(r.update_available){ toast('发现新版本 '+(r.latest||'')); }
+    else { toast(msg||'已是最新'); }
+    return r;
+  }catch(e){
+    if(el) el.textContent = e.message||String(e);
+    toast(e.message||String(e));
+  }
+}
+async function applyUpdate(){
+  if(!confirm('将下载新版本并替换当前目录下的 exe，服务会短暂中断。继续？')) return;
+  const el=document.getElementById('updateResult');
+  if(el) el.textContent='下载更新中…';
+  try{
+    const r = await jsend('/api/update/apply','POST',{});
+    if(el) el.textContent = r.message||JSON.stringify(r);
+    toast(r.message||'已调度更新');
+  }catch(e){
+    if(el) el.textContent = e.message||String(e);
+    toast(e.message||String(e));
+  }
+}
+async function saveUpdatePrefs(){
+  const body = {
+    update_enabled: !!(document.getElementById('update_enabled')||{}).checked,
+    update_auto_apply: !!(document.getElementById('update_auto_apply')||{}).checked,
+    update_repo: ((document.getElementById('update_repo')||{}).value||'').trim(),
+  };
+  try{
+    await jsend('/api/config','PUT', body);
+    toast('更新设置已保存');
+  }catch(e){ toast(e.message||String(e)); }
+}
+
+async function refreshAll(){ await Promise.all([refreshMetrics(), refreshStatus(), refreshConfig()]); if(currentPage==='models') refreshFamilies(); }
+async function loadVersion(){
+  try{
+    const v=await jget('/api/version');
+    const sub=document.querySelector('.brand .sub');
+    if(sub && v.version){ sub.textContent = 'v'+v.version+' · Monitor · Models · Settings'; }
+  }catch(_e){}
+}
+refreshAll(); loadVersion();
+setInterval(refreshMetrics, 2000);
