@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"syscall"
 	"time"
@@ -23,30 +24,42 @@ import (
 var (
 	title    = "Devin BYOK"
 	user32   = syscall.NewLazyDLL("user32.dll")
+	kernel32 = syscall.NewLazyDLL("kernel32.dll")
 	procFind = user32.NewProc("FindWindowW")
 	procShow = user32.NewProc("ShowWindow")
 	procIsIc = user32.NewProc("IsIconic")
+	procSetFG = user32.NewProc("SetForegroundWindow")
 
 	embedMu   sync.Mutex
 	embedHTTP *http.Server
+
+	// singletonMutex 保持命名互斥句柄，进程退出前不得 Close（否则可被第二实例抢占）
+	singletonMutex uintptr
 )
 
 const (
 	swHide    = 0
 	swRestore = 9
 	swShow    = 5
+	errorAlreadyExists = 183
 )
 
 func main() {
+	// systray 的 init 会 LockOSThread；这里再锁一次，确保主线程跑 UI 消息泵
+	runtime.LockOSThread()
 	hideConsole()
+
 	if !ensureSingleInstance() {
-		// 已有实例：尝试前置窗口后退出
-		showMainWindow()
+		// 已有实例：尝试前置已有窗口后退出，避免双托盘
+		bringExistingToFront()
 		return
 	}
+
 	prefs := desktop.LoadPrefs()
 
-	go systray.Run(func() { onTrayReady() }, func() {})
+	// 与 webview 共用主线程消息循环：只能用 Register，不能 go systray.Run
+	// go systray.Run 会在子线程自建 GetMessage 泵，导致托盘图标在、菜单无响应
+	systray.Register(onTrayReady, onTrayExit)
 
 	if err := startService(); err != nil {
 		logx.Warnf("start service: %v", err)
@@ -66,7 +79,10 @@ func main() {
 	})
 	if w == nil {
 		_ = exec.Command("cmd", "/c", "start", "", uiURL).Start()
-		select {}
+		// 无 webview 时由托盘保活；Register 需要宿主泵消息——此处退化轮询
+		for {
+			time.Sleep(time.Hour)
+		}
 	}
 
 	_ = w.Bind("nativeStart", func() string {
@@ -83,10 +99,10 @@ func main() {
 	_ = w.Bind("nativeHideToTray", func() string { hideMainWindow(); return "ok" })
 	_ = w.Bind("nativeShowWindow", func() string { showMainWindow(); return "ok" })
 	_ = w.Bind("nativeQuit", func() string {
-		// 给更新脚本时间启动
+		// 给更新脚本一点启动时间；先清托盘再退
 		go func() {
 			time.Sleep(400 * time.Millisecond)
-			os.Exit(0)
+			quitApp()
 		}()
 		return "ok"
 	})
@@ -102,6 +118,8 @@ func main() {
 		}()
 	}
 	w.Run()
+	// webview 退出时清理托盘
+	quitApp()
 }
 
 func onTrayReady() {
@@ -110,13 +128,16 @@ func onTrayReady() {
 	}
 	systray.SetTitle(title)
 	systray.SetTooltip("Devin BYOK")
-	mShow := systray.AddMenuItem("Show", "Show window")
-	mHide := systray.AddMenuItem("Hide to tray", "Hide window")
+
+	// 中文菜单，左右键点击托盘都会弹出
+	mShow := systray.AddMenuItem("显示窗口", "Show window")
+	mHide := systray.AddMenuItem("隐藏到托盘", "Hide to tray")
 	systray.AddSeparator()
-	mStart := systray.AddMenuItem("Start service", "start + apply")
-	mStop := systray.AddMenuItem("Stop service", "stop + restore")
+	mStart := systray.AddMenuItem("启动服务", "start + apply")
+	mStop := systray.AddMenuItem("停止服务", "stop + restore")
 	systray.AddSeparator()
-	mQuit := systray.AddMenuItem("Quit GUI", "Quit UI")
+	mQuit := systray.AddMenuItem("退出程序", "Quit GUI")
+
 	go func() {
 		for {
 			select {
@@ -129,10 +150,21 @@ func onTrayReady() {
 			case <-mStop.ClickedCh:
 				_ = stopService()
 			case <-mQuit.ClickedCh:
-				os.Exit(0)
+				quitApp()
 			}
 		}
 	}()
+}
+
+func onTrayExit() {
+	// systray 退出回调：预留清理位
+}
+
+func quitApp() {
+	// 仅退出 GUI：不在这里 stop/restore（更新流程依赖 nativeQuit 不抢 restore）
+	systray.Quit()
+	time.Sleep(80 * time.Millisecond)
+	os.Exit(0)
 }
 
 func watchMinimize() {
@@ -165,20 +197,33 @@ func hideMainWindow() {
 }
 
 func showMainWindow() {
-	if h := findMainHWND(); h != 0 {
-		procShow.Call(h, uintptr(swRestore))
-		procShow.Call(h, uintptr(swShow))
+	h := findMainHWND()
+	if h == 0 {
+		return
 	}
+	procShow.Call(h, uintptr(swRestore))
+	procShow.Call(h, uintptr(swShow))
+	procSetFG.Call(h)
+}
+
+func bringExistingToFront() {
+	// 第二实例启动时多试几次，等首实例窗口就绪
+	for i := 0; i < 15; i++ {
+		if findMainHWND() != 0 {
+			showMainWindow()
+			return
+		}
+		time.Sleep(120 * time.Millisecond)
+	}
+	showMainWindow()
 }
 
 func hideConsole() {
-	kernel32 := syscall.NewLazyDLL("kernel32.dll")
 	getConsoleWindow := kernel32.NewProc("GetConsoleWindow")
 	freeConsole := kernel32.NewProc("FreeConsole")
 	hwnd, _, _ := getConsoleWindow.Call()
 	if hwnd != 0 {
-		u := syscall.NewLazyDLL("user32.dll")
-		showWindow := u.NewProc("ShowWindow")
+		showWindow := user32.NewProc("ShowWindow")
 		showWindow.Call(hwnd, 0)
 		freeConsole.Call()
 	}
@@ -231,7 +276,6 @@ func stopService() string {
 	_, _ = devin.RestorePortal()
 	return "ok"
 }
-
 
 func startEmbedded() error {
 	if online() {
@@ -354,26 +398,27 @@ func projectRoot() string {
 	return "."
 }
 
-
 // ensureSingleInstance 禁止多个 GUI 同时运行（命名互斥量）。
+// 注意：必须用 CreateMutex 的 errno 返回值判断 ERROR_ALREADY_EXISTS，
+// 不能在 Call 之后再单独 GetLastError（Go runtime 可能已清掉 last error）。
 func ensureSingleInstance() bool {
-	kernel32 := syscall.NewLazyDLL("kernel32.dll")
 	createMutex := kernel32.NewProc("CreateMutexW")
-	getLastError := kernel32.NewProc("GetLastError")
-	name, err := syscall.UTF16PtrFromString("Local\\DevinBYOK_GUI_Singleton")
+	closeHandle := kernel32.NewProc("CloseHandle")
+	name, err := syscall.UTF16PtrFromString(`Local\DevinBYOK_GUI_Singleton`)
 	if err != nil {
 		return true
 	}
-	handle, _, _ := createMutex.Call(0, 1, uintptr(unsafe.Pointer(name)))
+	// lpMutexAttributes=nil, bInitialOwner=FALSE, lpName=...
+	handle, _, errno := createMutex.Call(0, 0, uintptr(unsafe.Pointer(name)))
 	if handle == 0 {
+		// 创建失败时放行，避免误伤启动
 		return true
 	}
-	// ERROR_ALREADY_EXISTS = 183
-	errCode, _, _ := getLastError.Call()
-	if errCode == 183 {
+	if errno == syscall.Errno(errorAlreadyExists) {
+		_, _, _ = closeHandle.Call(handle)
 		return false
 	}
-	// 保持互斥量直到进程退出（故意不 CloseHandle）
-	_ = handle
+	// 故意不 CloseHandle：句柄活到进程退出，互斥才一直占着
+	singletonMutex = handle
 	return true
 }

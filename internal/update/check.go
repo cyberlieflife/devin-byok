@@ -165,7 +165,8 @@ func DownloadAndSchedule(ctx context.Context, cfg Config, current string, instal
 		return ApplyResult{OK: false, Message: check.Message}, fmt.Errorf("%s", check.Message)
 	}
 	if !check.UpdateAvailable {
-		setProgress("done", 100, 0, 0, "已是最新版本")
+		// 无需更新：回到 idle，避免 GUI 误显示进度条
+		ResetProgress()
 		return ApplyResult{OK: true, Message: "无需更新: " + check.Message}, nil
 	}
 	if check.AssetURL == "" {
