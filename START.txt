@@ -1,0 +1,12 @@
+﻿Devin BYOK v1.2.2 (GUI only)
+
+1. Copy config.example.yaml to config.yaml
+2. Edit config.yaml (base_url / api_key / upstream_model)
+3. Run devin-byok-gui.exe
+4. Click Start service in GUI (auto apply to Devin)
+5. Fully quit and reopen Devin, pick a BYOK model
+
+Stop: click Stop service in GUI (auto restore)
+
+Repo: https://github.com/cyberlieflife/devin-byok
+License: AGPL-3.0
