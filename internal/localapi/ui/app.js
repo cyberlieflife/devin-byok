@@ -485,7 +485,7 @@ async function saveUpdatePrefs(){
 
 // ===== 底栏更新状态 + 弹窗 + 进度 =====
 // 与 internal/version.Version 保持一致（硬编码兜底，避免接口未就绪显示 v?）
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.2.3';
 let __lastUpdateCheck = null;
 let __updateProgressTimer = null;
 let __updateModalForced = false;
@@ -584,6 +584,16 @@ function showUpdateModal(r, force){
   if(later) later.hidden = false;
   modal.hidden = false;
 }
+
+function openSupportModal(){
+  const m = document.getElementById('supportModal');
+  if(m) m.hidden = false;
+}
+function dismissSupportModal(){
+  const m = document.getElementById('supportModal');
+  if(m) m.hidden = true;
+}
+
 function dismissUpdateModal(){
   const modal = document.getElementById('updateModal');
   if(modal) modal.hidden = true;

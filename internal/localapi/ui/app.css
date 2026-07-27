@@ -57,10 +57,10 @@ input:focus,select:focus{border-color:var(--primary)}
 .chip-row{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
 .chip{border:1px solid var(--hairline);border-radius:999px;padding:4px 10px;font-size:12px;background:var(--canvas-soft);font-family:var(--mono)}
 .chip.med{background:#fff3ec;border-color:#f7c3a8;color:var(--primary-active)}
-.modal-mask{position:fixed;inset:0;background:rgba(38,37,30,.28);display:flex;align-items:center;justify-content:center;padding:20px;z-index:20}
+.modal-mask{position:fixed;inset:0;background:rgba(38,37,30,.28);display:flex;align-items:center;justify-content:center;padding:20px;z-index:60}
 .modal-mask[hidden]{display:none}
 .modal{width:min(480px,100%);max-height:90vh;overflow:auto}
-#toast{position:fixed;right:16px;bottom:16px;background:var(--ink);color:var(--canvas);padding:10px 14px;border-radius:8px;display:none;z-index:30;font-size:13px;max-width:360px}
+#toast{position:fixed;right:16px;bottom:56px;background:var(--ink);color:var(--canvas);padding:10px 14px;border-radius:8px;display:none;z-index:50;font-size:13px;max-width:360px;box-shadow:0 8px 24px rgba(38,37,30,.18)}
 
 /* Feature model tabs on Models page */
 .feature-model-card{margin-bottom:16px}
@@ -77,7 +77,7 @@ input:focus,select:focus{border-color:var(--primary)}
 .feature-bind-title{font-weight:600;margin-bottom:8px;color:var(--ink)}
 
 .app.has-footer{padding-bottom:52px}
-.app-footer{position:fixed;left:0;right:0;bottom:0;height:40px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 16px;background:rgba(255,255,255,.92);border-top:1px solid var(--hairline);backdrop-filter:blur(8px);z-index:40;font-size:12px;color:var(--body)}
+.app-footer{position:fixed;left:0;right:0;bottom:0;height:40px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 16px;background:rgba(255,255,255,.92);border-top:1px solid var(--hairline);backdrop-filter:blur(8px);z-index:10;font-size:12px;color:var(--body)}
 .footer-left{display:flex;align-items:center;gap:8px;min-width:0}
 .footer-sep{color:var(--muted-soft)}
 #footerUpdate{color:var(--muted)}
@@ -88,3 +88,18 @@ input:focus,select:focus{border-color:var(--primary)}
 .footer-progress-bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--peach),var(--primary));transition:width .2s}
 .update-modal{width:min(520px,100%)}
 .update-notes{white-space:pre-wrap;word-break:break-word;max-height:280px;overflow:auto;background:var(--canvas-soft);border:1px solid var(--hairline-soft);border-radius:8px;padding:12px;font-size:13px;line-height:1.5;margin:10px 0 0;font-family:var(--font);color:var(--ink)}
+
+/* 底栏层级低于 toast/modal；赞赏为无框文本按钮 */
+.footer-support{
+  border:none;background:transparent;padding:0;margin:0;
+  color:var(--primary-active);font:inherit;font-size:12px;font-weight:600;
+  cursor:pointer;text-decoration:none;white-space:nowrap;
+}
+.footer-support:hover{color:var(--primary);text-decoration:underline}
+.support-modal{width:min(420px,100%);text-align:center}
+.support-modal .support-text{margin:0 0 14px;color:var(--body);font-size:14px;line-height:1.6}
+.support-modal .support-qr{
+  width:min(320px,100%);height:auto;border-radius:12px;
+  border:1px solid var(--hairline);background:var(--canvas-soft);
+  display:block;margin:0 auto 8px;
+}

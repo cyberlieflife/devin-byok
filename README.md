@@ -119,3 +119,9 @@ GUI：设置 → 检查更新 / 下载并更新
 ## 许可证
 
 GNU Affero General Public License v3.0 — 见 [LICENSE](LICENSE)。
+
+## 赞赏支持
+
+如果觉得项目好可以赞赏我支持一下谢谢喵
+
+![赞赏码](Support.jpg)
