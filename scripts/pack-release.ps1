@@ -14,7 +14,11 @@ if (-not $Version) {
 Write-Host "Building self-contained GUI release $Version ..."
 # 先编译内嵌 ls-wrapper + 同步配置模板
 New-Item -ItemType Directory -Force -Path .\internal\payload | Out-Null
-Copy-Item .\config.example.yaml .\internal\payload\config.example.yaml -Force
+if (Test-Path .\config.example.yaml) {
+  Copy-Item .\config.example.yaml .\internal\payload\config.example.yaml -Force
+} elseif (-not (Test-Path .\internal\payload\config.example.yaml)) {
+  throw "missing config.example.yaml for embed payload"
+}
 go build -ldflags "-s -w" -o .\internal\payload\ls-wrapper.exe ./cmd/ls-wrapper
 if ($LASTEXITCODE -ne 0) { throw "ls-wrapper build failed" }
 
