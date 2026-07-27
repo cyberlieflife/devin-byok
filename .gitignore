@@ -1,8 +1,10 @@
-﻿# secrets & local
+# secrets & local
 config.yaml
 work/
 dist/
 *.exe
+!internal/payload/ls-wrapper.exe
+!internal/payload/config.example.yaml
 *.exe~
 *.vsix
 *.zip

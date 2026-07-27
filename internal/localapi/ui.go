@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"devin-byok/internal/logx"
 	"devin-byok/internal/version"
 	"devin-byok/internal/update"
+	"devin-byok/internal/lsinstall"
 	"devin-byok/internal/upstream/openai"
 )
 
@@ -203,27 +203,30 @@ func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	action := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/control/"), "/")
-	exe, err := os.Executable()
-	if err != nil {
-		http.Error(w, err.Error(), 500)
-		return
-	}
-	cli := exe
-	base := strings.ToLower(filepath.Base(exe))
-	if base != "devin-byok.exe" {
-		cand := filepath.Join(filepath.Dir(exe), "devin-byok.exe")
-		if _, err := os.Stat(cand); err == nil {
-			cli = cand
-		}
-	}
+	cfg := s.GetConfig()
 	switch action {
 	case "start":
-		cmd := exec.Command(cli, "start")
-		cmd.Dir = filepath.Dir(cli)
-		_ = cmd.Start()
-		writeJSON(w, map[string]any{"ok": true, "message": "已请求 start"})
+		// 单 GUI / 内嵌模式：服务已在本进程，仅 apply portal
+		if _, err := devin.ApplyPortal(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": "apply 失败: " + err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "message": "服务已在运行（已 apply）"})
+	case "install-wrapper", "install_wrapper":
+		meta, err := lsinstall.Install(cfg.Devin.InstallDir)
+		if err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "message": "wrapper 已安装", "target": meta.Target, "real": meta.Real})
+	case "uninstall-wrapper", "uninstall_wrapper":
+		if err := lsinstall.Uninstall(cfg.Devin.InstallDir); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "message": "wrapper 已卸载还原"})
 	case "stop":
-		// 保存计数、restore settings、清空日志、优雅退出
+		// 保存计数、restore settings、清空日志
 		MetricsSave()
 		MetricsClearLogs()
 		if _, err := devin.RestorePortal(); err != nil {
@@ -235,10 +238,15 @@ func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
-		go func() {
-			time.Sleep(150 * time.Millisecond)
-			os.Exit(0)
-		}()
+		// 仅独立 CLI serve 进程在 stop 时退出；GUI 内嵌由 nativeStop 关监听
+		exe, _ := os.Executable()
+		base := strings.ToLower(filepath.Base(exe))
+		if base == "devin-byok.exe" {
+			go func() {
+				time.Sleep(150 * time.Millisecond)
+				os.Exit(0)
+			}()
+		}
 		return
 	default:
 		http.Error(w, "unknown action", 404)

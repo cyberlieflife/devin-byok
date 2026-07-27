@@ -16,6 +16,8 @@ import (
 	"devin-byok/internal/devin"
 	"devin-byok/internal/localapi"
 	"devin-byok/internal/logx"
+	"devin-byok/internal/paths"
+	"devin-byok/internal/lsinstall"
 	"devin-byok/internal/update"
 	"devin-byok/internal/version"
 	"devin-byok/internal/upstream/openai"
@@ -91,7 +93,7 @@ func printHelp() {
   devin-byok help
 
 推荐:
-  1) 编辑 config.yaml
+  1) 在 GUI 或编辑 %USERPROFILE%\.devin-byok\config.yaml
   2) devin-byok install
   3) devin-byok start
   4) devin-byok autostart on   # 可选
@@ -100,16 +102,7 @@ func printHelp() {
 }
 
 func findConfig() string {
-	cands := []string{"config.yaml", filepath.Join(`D:\Devin-byok`, "config.yaml")}
-	if appdata := os.Getenv("APPDATA"); appdata != "" {
-		cands = append(cands, filepath.Join(appdata, "devin-byok", "config.yaml"))
-	}
-	for _, c := range cands {
-		if _, err := os.Stat(c); err == nil {
-			return c
-		}
-	}
-	return "config.yaml"
+	return paths.FindConfig()
 }
 
 func projectRoot() string {
@@ -140,8 +133,7 @@ func mustServe(cfgPath string) {
 		logx.Errorf("load config: %v", err)
 		os.Exit(1)
 	}
-	root := projectRoot()
-	captureDir := filepath.Join(root, "work", "capture")
+	captureDir := paths.CaptureDir()
 	srv := localapi.New(cfg, captureDir)
 	abs, _ := filepath.Abs(cfgPath)
 	srv.SetConfigPath(abs)
@@ -382,39 +374,27 @@ func mustRestore() {
 }
 
 func mustInstall() {
-	root := projectRoot()
-	wrapper := filepath.Join(root, "devin-byok-ls-wrapper.exe")
-	if _, err := os.Stat(wrapper); err != nil {
-		logx.Infof("building ls-wrapper ...")
-		cmd := exec.Command("go", "build", "-o", wrapper, "./cmd/ls-wrapper")
-		cmd.Dir = root
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			logx.Errorf("build wrapper: %v", err)
-			os.Exit(1)
-		}
+	cfgPath := findConfig()
+	installDir := `D:\Devin`
+	if cfg, err := config.Load(cfgPath); err == nil && cfg.Devin.InstallDir != "" {
+		installDir = cfg.Devin.InstallDir
 	}
-	script := filepath.Join(root, "scripts", "install-ls-wrapper.py")
-	cmd := exec.Command("python", script)
-	cmd.Dir = root
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	meta, err := lsinstall.Install(installDir)
+	if err != nil {
 		logx.Errorf("install wrapper: %v", err)
 		os.Exit(1)
 	}
-	logx.Infof("install done. Next: devin-byok start && 重启 Devin")
+	logx.Infof("install done target=%s real=%s", meta.Target, meta.Real)
+	logx.Infof("Next: devin-byok start && restart Devin")
 }
 
 func mustUninstall() {
-	root := projectRoot()
-	script := filepath.Join(root, "scripts", "uninstall-ls-wrapper.py")
-	cmd := exec.Command("python", script)
-	cmd.Dir = root
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	cfgPath := findConfig()
+	installDir := `D:\Devin`
+	if cfg, err := config.Load(cfgPath); err == nil && cfg.Devin.InstallDir != "" {
+		installDir = cfg.Devin.InstallDir
+	}
+	if err := lsinstall.Uninstall(installDir); err != nil {
 		logx.Errorf("uninstall wrapper: %v", err)
 		os.Exit(1)
 	}

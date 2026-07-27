@@ -11,10 +11,17 @@ if (-not $Version) {
   if ($vg -match 'Version = "([^"]+)"') { $Version = $Matches[1] } else { $Version = "0.0.0" }
 }
 
-Write-Host "Building GUI-only release $Version ..."
+Write-Host "Building self-contained GUI release $Version ..."
+# 先编译内嵌 ls-wrapper + 同步配置模板
+New-Item -ItemType Directory -Force -Path .\internal\payload | Out-Null
+Copy-Item .\config.example.yaml .\internal\payload\config.example.yaml -Force
+go build -ldflags "-s -w" -o .\internal\payload\ls-wrapper.exe ./cmd/ls-wrapper
+if ($LASTEXITCODE -ne 0) { throw "ls-wrapper build failed" }
+
 $ld = "-X devin-byok/internal/version.Version=$Version -X devin-byok/internal/version.BuildTime=$(Get-Date -Format yyyy-MM-ddTHH:mm:ss)"
+# CLI 仅供开发调试，不打进 zip
 go build -ldflags $ld -o devin-byok.exe ./cmd/devin-byok
-go build -ldflags "-H windowsgui $ld" -o devin-byok-gui.exe ./cmd/devin-byok-gui
+go build -ldflags "-H windowsgui -s -w $ld" -o devin-byok-gui.exe ./cmd/devin-byok-gui
 
 $dist = Join-Path $Root "dist"
 $stage = Join-Path $dist ("devin-byok-" + $Version + "-windows-amd64")
@@ -22,18 +29,16 @@ if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
 Copy-Item .\devin-byok-gui.exe $stage\
-Copy-Item .\config.example.yaml $stage\
 
 $start = @"
-Devin BYOK v$Version (GUI only)
+Devin BYOK v$Version (self-contained GUI)
 
-1. Copy config.example.yaml to config.yaml
-2. Edit config.yaml (base_url / api_key / upstream_model)
-3. Run devin-byok-gui.exe
-4. Click Start service in GUI (auto apply to Devin)
-5. Fully quit and reopen Devin, pick a BYOK model
+1. Run devin-byok-gui.exe
+2. Configure models/providers in GUI (saved to %USERPROFILE%\.devin-byok\config.yaml)
+3. Start service in GUI (auto apply + LS wrapper)
+4. Fully quit and reopen Devin, pick a BYOK model
 
-Stop: click Stop service in GUI (auto restore)
+Quit GUI: service stops automatically and Devin settings restore.
 
 Repo: https://github.com/cyberlieflife/devin-byok
 License: AGPL-3.0

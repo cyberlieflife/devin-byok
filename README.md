@@ -11,23 +11,20 @@
 
 ## 用户怎么用（发布包）
 
-发布包 **只包含 3 个文件**：
+发布包**只包含 2 个文件**：
 
 ```
 devin-byok-gui.exe
-config.example.yaml
 START.txt
 ```
 
 1. 解压 zip  
-2. 复制 `config.example.yaml` → `config.yaml`，填写供应商  
-3. 双击 `devin-byok-gui.exe`  
-4. 在 GUI 点 **启动服务**（会自动 apply 到 Devin）  
+2. 双击 `devin-byok-gui.exe`  
+3. 在 GUI 配置模型/供应商（保存到 `%USERPROFILE%\.devin-byok\config.yaml`）  
+4. 点 **启动服务**（自动 apply + LS wrapper）  
 5. **完全退出并重开 Devin**，选择 BYOK 模型  
 
-停止：GUI 点 **停止服务**（会 restore Devin 设置）。
-
-> 发布包内服务跑在 GUI 进程中，无需单独的 CLI。
+退出 GUI 会自动关闭服务并 restore。配置由 GUI 管理，包内不再附带 config 模板。
 
 ## 配置最少要写什么
 
@@ -115,6 +112,15 @@ GUI：设置 → 检查更新 / 下载并更新
 | apply 元数据 | `%APPDATA%\devin-byok\last-apply.json` |
 | 指标 | `%APPDATA%\devin-byok\metrics.json` |
 | GUI 偏好 | `%APPDATA%\devin-byok\gui.json` |
+
+## 单文件 GUI
+
+发布包只需 `devin-byok-gui.exe`（+ `START.txt`）：内嵌 local-api、默认配置模板、LS wrapper。
+
+- 配置：`%USERPROFILE%\.devin-byok\config.yaml`（首次从内置模板生成，可在 GUI 修改）
+- 日志：`%APPDATA%\devin-byok\gui.log`
+- 退出 GUI：自动停止服务并 restore
+- 检测到 Devin 安装目录时自动植入 language_server 包装器
 
 ## 许可证
 
