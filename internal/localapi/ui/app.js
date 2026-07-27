@@ -641,7 +641,9 @@ async function acceptUpdateAndDownload(){
       }
       setFooterProgress(100, '即将重启…');
       toast(msg || '即将安装更新并重启');
-      if(typeof window.nativeQuit === 'function'){
+      if(typeof window.nativeQuitForce === 'function'){
+        setTimeout(()=>window.nativeQuitForce(), 300);
+      }else if(typeof window.nativeQuit === 'function'){
         setTimeout(()=>window.nativeQuit(), 500);
       }else{
         setTimeout(()=>{ toast('请关闭窗口以完成文件替换'); }, 800);

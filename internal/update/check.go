@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -176,6 +177,9 @@ func DownloadAndSchedule(ctx context.Context, cfg Config, current string, instal
 		exe, _ := os.Executable()
 		installDir = filepath.Dir(exe)
 	}
+	if abs, err := filepath.Abs(installDir); err == nil {
+		installDir = abs
+	}
 	tmp := filepath.Join(os.TempDir(), "devin-byok-update-"+strconv.FormatInt(time.Now().Unix(), 10))
 	_ = os.MkdirAll(tmp, 0o755)
 	zipPath := filepath.Join(tmp, check.AssetName)
@@ -208,41 +212,53 @@ func DownloadAndSchedule(ctx context.Context, cfg Config, current string, instal
 	if err := unzip(zipPath, extractDir); err != nil {
 		return ApplyResult{OK: false, Message: "unzip: " + err.Error()}, err
 	}
-	script := filepath.Join(tmp, "apply-update.cmd")
-	// 等主进程退出后覆盖 exe，再可选 start
-	content := fmt.Sprintf(`@echo off
-setlocal
-echo [devin-byok] waiting for process exit...
-timeout /t 2 /nobreak >nul
-set SRC=%s
-set DST=%s
-copy /Y "%%SRC%%\devin-byok.exe" "%%DST%%\devin-byok.exe" >nul
-copy /Y "%%SRC%%\devin-byok-gui.exe" "%%DST%%\devin-byok-gui.exe" >nul
-if exist "%%SRC%%\devin-byok-ls-wrapper.exe" copy /Y "%%SRC%%\devin-byok-ls-wrapper.exe" "%%DST%%\devin-byok-ls-wrapper.exe" >nul
-if exist "%%SRC%%\README.md" copy /Y "%%SRC%%\README.md" "%%DST%%\README.md" >nul
-if exist "%%SRC%%\config.example.yaml" copy /Y "%%SRC%%\config.example.yaml" "%%DST%%\config.example.yaml" >nul
-echo [devin-byok] update applied
-start "" "%%DST%%\devin-byok.exe" start
-start "" "%%DST%%\devin-byok-gui.exe"
-endlocal
-`, extractDir, installDir)
-	content = "@echo off\r\n" +
-		"setlocal\r\n" +
-		"echo [devin-byok] applying update...\r\n" +
-		"timeout /t 2 /nobreak >nul\r\n" +
-		"set \"SRC=" + extractDir + "\"\r\n" +
-		"set \"DST=" + installDir + "\"\r\n" +
-		"copy /Y \"%SRC%\\devin-byok-gui.exe\" \"%DST%\\devin-byok-gui.exe\"\r\n" +
-		"if exist \"%SRC%\\config.example.yaml\" copy /Y \"%SRC%\\config.example.yaml\" \"%DST%\\config.example.yaml\"\r\n" +
-		"if exist \"%SRC%\\START.txt\" copy /Y \"%SRC%\\START.txt\" \"%DST%\\START.txt\"\r\n" +
-		"echo [devin-byok] update applied to %DST%\r\n" +
-		"start \"\" \"%DST%\\devin-byok-gui.exe\"\r\n" +
-		"endlocal\r\n"
-	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+	// PowerShell 应用脚本：等待旧进程释放文件锁 → 复制 → 启动新 GUI → 退出（不留黑窗）
+	script := filepath.Join(tmp, "apply-update.ps1")
+	srcPS := powershellSingleQuote(extractDir)
+	dstPS := powershellSingleQuote(installDir)
+	guiName := "devin-byok-gui.exe"
+	ps := strings.Join([]string{
+		"$ErrorActionPreference = 'Continue'",
+		"Write-Host '[devin-byok] waiting for old process to exit...'",
+		"$src = " + srcPS,
+		"$dst = " + dstPS,
+		"$gui = Join-Path $dst '" + guiName + "'",
+		"$srcGui = Join-Path $src '" + guiName + "'",
+		"if (-not (Test-Path -LiteralPath $srcGui)) { Write-Host '[devin-byok] ERROR: missing' $srcGui; exit 1 }",
+		"# 最多等 40s，直到目标 exe 可写（旧 GUI 已退出）",
+		"for ($i = 0; $i -lt 80; $i++) {",
+		"  try {",
+		"    if (Test-Path -LiteralPath $gui) {",
+		"      $fs = [System.IO.File]::Open($gui, 'Open', 'ReadWrite', 'None')",
+		"      $fs.Close()",
+		"    }",
+		"    break",
+		"  } catch {",
+		"    Start-Sleep -Milliseconds 500",
+		"  }",
+		"}",
+		"Write-Host '[devin-byok] applying update to' $dst",
+		"New-Item -ItemType Directory -Force -Path $dst | Out-Null",
+		"Copy-Item -LiteralPath $srcGui -Destination $gui -Force",
+		"if (Test-Path -LiteralPath (Join-Path $src 'START.txt')) { Copy-Item -LiteralPath (Join-Path $src 'START.txt') -Destination (Join-Path $dst 'START.txt') -Force }",
+		"if (Test-Path -LiteralPath (Join-Path $src 'config.example.yaml')) { Copy-Item -LiteralPath (Join-Path $src 'config.example.yaml') -Destination (Join-Path $dst 'config.example.yaml') -Force }",
+		"Write-Host '[devin-byok] update applied'",
+		"Start-Process -FilePath $gui -WorkingDirectory $dst",
+		"Write-Host '[devin-byok] done'",
+		"exit 0",
+	}, "\r\n") + "\r\n"
+	if err := os.WriteFile(script, []byte(ps), 0o755); err != nil {
+		setProgress("error", 0, 0, 0, err.Error())
 		return ApplyResult{OK: false, Message: err.Error()}, err
 	}
-	cmd := exec.Command("cmd", "/c", "start", "", script)
+	// 隐藏窗口启动；/c 执行完自动结束，避免残留 cmd
+	cmd := exec.Command("powershell",
+		"-NoProfile", "-ExecutionPolicy", "Bypass",
+		"-WindowStyle", "Hidden",
+		"-File", script,
+	)
 	cmd.Dir = tmp
+	cmd.SysProcAttr = hiddenSysProcAttr()
 	if err := cmd.Start(); err != nil {
 		setProgress("error", 0, 0, 0, err.Error())
 		return ApplyResult{OK: false, Message: err.Error()}, err
@@ -349,7 +365,11 @@ func DefaultInstallDir() string {
 	if err != nil {
 		return "."
 	}
-	return filepath.Dir(exe)
+	dir := filepath.Dir(exe)
+	if abs, err := filepath.Abs(dir); err == nil {
+		return abs
+	}
+	return dir
 }
 
 // GOOS helper for tests
@@ -421,4 +441,15 @@ func downloadFileProgress(ctx context.Context, url, dest string) error {
 		setProgress("downloading", 90, pr.read, pr.total, "下载完成，准备校验…")
 	}
 	return err
+}
+
+
+func powershellSingleQuote(s string) string {
+	// PowerShell 单引号字符串：' -> ''
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
+// hiddenSysProcAttr 隐藏子进程控制台窗口（Windows）。
+func hiddenSysProcAttr() *syscall.SysProcAttr {
+	return &syscall.SysProcAttr{HideWindow: true}
 }

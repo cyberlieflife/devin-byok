@@ -133,6 +133,16 @@ func main() {
 		}()
 		return "ok"
 	})
+	// 更新场景：尽快退出，不做 stop/restore，避免拖住文件锁
+	_ = w.Bind("nativeQuitForce", func() string {
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			systray.Quit()
+			time.Sleep(50 * time.Millisecond)
+			os.Exit(0)
+		}()
+		return "ok"
+	})
 
 	w.SetSize(1100, 780, webview2.HintNone)
 	w.Navigate(uiURL)
