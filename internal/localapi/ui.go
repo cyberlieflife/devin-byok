@@ -48,6 +48,7 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/version", s.handleAPIVersion)
 	mux.HandleFunc("/api/update/check", s.handleAPIUpdateCheck)
 	mux.HandleFunc("/api/update/apply", s.handleAPIUpdateApply)
+	mux.HandleFunc("/api/update/progress", s.handleAPIUpdateProgress)
 	s.registerExtraAPI(mux)
 }
 
@@ -360,5 +361,9 @@ func (s *Server) handleAPIUpdateApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, res)
+}
+
+func (s *Server) handleAPIUpdateProgress(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, update.GetProgress())
 }
 

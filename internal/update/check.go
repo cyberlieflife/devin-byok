@@ -41,6 +41,7 @@ type Result struct {
 	AssetURL      string `json:"asset_url,omitempty"`
 	SHA256URL     string `json:"sha256_url,omitempty"`
 	Body          string `json:"body,omitempty"`
+	ChineseNotes  string `json:"chinese_notes,omitempty"`
 	Message       string `json:"message,omitempty"`
 	CheckedAt     string `json:"checked_at"`
 }
@@ -67,7 +68,7 @@ type ghRelease struct {
 func Check(ctx context.Context, cfg Config, current string) Result {
 	res := Result{OK: true, Current: normalizeVer(current), CheckedAt: time.Now().Format(time.RFC3339)}
 	if !cfg.Enabled {
-		res.Message = "update disabled"
+		res.Message = "已关闭在线更新"
 		return res
 	}
 	url := strings.TrimSpace(cfg.CheckURL)
@@ -111,6 +112,7 @@ func Check(ctx context.Context, cfg Config, current string) Result {
 	res.Latest = normalizeVer(rel.TagName)
 	res.ReleaseURL = rel.HTMLURL
 	res.Body = truncate(rel.Body, 2000)
+	res.ChineseNotes = buildChineseNotes(res.Current, res.Latest, rel.Body)
 	want := cfg.AssetContains
 	if want == "" {
 		want = "windows-amd64.zip"
@@ -139,28 +141,31 @@ func Check(ctx context.Context, cfg Config, current string) Result {
 	res.SHA256URL = shaURL
 	if res.Latest == "" {
 		res.OK = false
-		res.Message = "release 无 tag"
+		res.Message = "Release 缺少版本标签"
 		return res
 	}
 	cmp := compareSemver(res.Current, res.Latest)
 	res.UpdateAvailable = cmp < 0
 	if zipURL == "" {
-		res.Message = "找到版本但无匹配资产 " + want
+		res.Message = "找到版本但未匹配安装包资产：" + want
 	} else if res.UpdateAvailable {
-		res.Message = "有新版本 " + res.Latest
+		res.Message = "发现新版本 v" + res.Latest
 	} else {
-		res.Message = "已是最新或更新"
+		res.Message = "已是最新版本"
 	}
 	return res
 }
 
 // DownloadAndSchedule 下载 zip，校验 sha256（若有），写更新脚本并启动后退出由调用方处理。
 func DownloadAndSchedule(ctx context.Context, cfg Config, current string, installDir string) (ApplyResult, error) {
+	setProgress("checking", 0, 0, 0, "正在检查更新…")
 	check := Check(ctx, cfg, current)
 	if !check.OK {
+		setProgress("error", 0, 0, 0, check.Message)
 		return ApplyResult{OK: false, Message: check.Message}, fmt.Errorf("%s", check.Message)
 	}
 	if !check.UpdateAvailable {
+		setProgress("done", 100, 0, 0, "已是最新版本")
 		return ApplyResult{OK: true, Message: "无需更新: " + check.Message}, nil
 	}
 	if check.AssetURL == "" {
@@ -173,11 +178,14 @@ func DownloadAndSchedule(ctx context.Context, cfg Config, current string, instal
 	tmp := filepath.Join(os.TempDir(), "devin-byok-update-"+strconv.FormatInt(time.Now().Unix(), 10))
 	_ = os.MkdirAll(tmp, 0o755)
 	zipPath := filepath.Join(tmp, check.AssetName)
-	if err := downloadFile(ctx, check.AssetURL, zipPath); err != nil {
+	setProgress("downloading", 0, 0, 0, "正在下载 "+check.Latest+"…")
+	if err := downloadFileProgress(ctx, check.AssetURL, zipPath); err != nil {
+		setProgress("error", 0, 0, 0, "下载失败: "+err.Error())
 		return ApplyResult{OK: false, Message: err.Error()}, err
 	}
 	if check.SHA256URL != "" {
 		sumPath := zipPath + ".sha256"
+		setProgress("verifying", 95, 0, 0, "正在校验 SHA256…")
 		if err := downloadFile(ctx, check.SHA256URL, sumPath); err == nil {
 			want, _ := os.ReadFile(sumPath)
 			got, err := fileSHA256(zipPath)
@@ -235,8 +243,10 @@ endlocal
 	cmd := exec.Command("cmd", "/c", "start", "", script)
 	cmd.Dir = tmp
 	if err := cmd.Start(); err != nil {
+		setProgress("error", 0, 0, 0, err.Error())
 		return ApplyResult{OK: false, Message: err.Error()}, err
 	}
+	setProgress("scheduling", 100, 0, 0, "即将退出并安装 "+check.Latest)
 	return ApplyResult{OK: true, Message: "已下载 " + check.Latest + "，即将替换并重启", Script: script, ZipPath: zipPath}, nil
 }
 
@@ -343,3 +353,71 @@ func DefaultInstallDir() string {
 
 // GOOS helper for tests
 func IsWindows() bool { return runtime.GOOS == "windows" }
+
+
+func buildChineseNotes(current, latest, body string) string {
+	var b strings.Builder
+	b.WriteString("发现新版本，建议立即更新以获得修复与新功能。\n\n")
+	b.WriteString("当前版本：v" + normalizeVer(current) + "\n")
+	b.WriteString("最新版本：v" + normalizeVer(latest) + "\n\n")
+	b.WriteString("更新说明：\n")
+	body = strings.TrimSpace(body)
+	if body == "" {
+		b.WriteString("（发布者未填写详细说明，请查看 GitHub Release 页面）\n")
+	} else {
+		// 直接展示正文；发布时请用中文撰写 notes
+		b.WriteString(body)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n更新过程将：下载安装包 → 关闭当前程序 → 替换文件 → 自动重新打开 GUI。\n")
+	b.WriteString("请先保存未保存的配置，然后点击「立即更新」。")
+	return b.String()
+}
+
+type progressReader struct {
+	r     io.Reader
+	total int64
+	read  int64
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	if n > 0 {
+		p.read += int64(n)
+		pct := 0.0
+		if p.total > 0 {
+			pct = float64(p.read) * 90.0 / float64(p.total) // 0-90% for download
+		} else {
+			pct = 10
+		}
+		setProgress("downloading", pct, p.read, p.total, fmt.Sprintf("下载中 %d / %d 字节", p.read, p.total))
+	}
+	return n, err
+}
+
+func downloadFileProgress(ctx context.Context, url, dest string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "devin-byok-updater")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("download HTTP %d", resp.StatusCode)
+	}
+	f, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	pr := &progressReader{r: resp.Body, total: resp.ContentLength}
+	_, err = io.Copy(f, pr)
+	if err == nil {
+		setProgress("downloading", 90, pr.read, pr.total, "下载完成，准备校验…")
+	}
+	return err
+}

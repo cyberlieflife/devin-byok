@@ -482,6 +482,153 @@ async function saveUpdatePrefs(){
   }catch(e){ toast(e.message||String(e)); }
 }
 
+
+// ===== 底栏更新状态 + 弹窗 + 进度 =====
+let __lastUpdateCheck = null;
+let __updateProgressTimer = null;
+let __updateModalForced = false;
+
+function setFooterVersion(v){
+  const el = document.getElementById('footerVersion');
+  if(el) el.textContent = 'v' + (v || '?');
+}
+function setFooterUpdate(text, hasUpdate){
+  const el = document.getElementById('footerUpdate');
+  if(!el) return;
+  el.textContent = text;
+  el.classList.toggle('has-update', !!hasUpdate);
+}
+function showFooterProgress(show){
+  const w = document.getElementById('footerProgressWrap');
+  if(w) w.hidden = !show;
+}
+function setFooterProgress(pct, text){
+  showFooterProgress(true);
+  const bar = document.getElementById('footerProgressBar');
+  const tx = document.getElementById('footerProgressText');
+  const p = Math.max(0, Math.min(100, Math.round(pct||0)));
+  if(bar) bar.style.width = p + '%';
+  if(tx) tx.textContent = (text || (p + '%'));
+}
+
+async function runUpdateCheck(opts){
+  opts = opts || {};
+  try{
+    const r = await jget('/api/update/check');
+    __lastUpdateCheck = r;
+    const cur = r.current || '?';
+    const latest = r.latest || cur;
+    setFooterVersion(cur);
+    if(!r.ok){
+      setFooterUpdate('更新检查失败', false);
+      return r;
+    }
+    if(r.update_available){
+      setFooterUpdate('有新版本 v' + latest, true);
+      if(opts.showModal !== false){
+        showUpdateModal(r, !!opts.force);
+      }
+    }else{
+      setFooterUpdate('已是最新 v' + latest, false);
+    }
+    return r;
+  }catch(e){
+    setFooterUpdate('更新检查失败', false);
+    return null;
+  }
+}
+
+function showUpdateModal(r, force){
+  const modal = document.getElementById('updateModal');
+  if(!modal) return;
+  __updateModalForced = !!force;
+  const ver = document.getElementById('updateModalVersions');
+  const notes = document.getElementById('updateModalNotes');
+  if(ver) ver.textContent = '当前 v' + (r.current||'?') + '  →  最新 v' + (r.latest||'?');
+  if(notes) notes.textContent = r.chinese_notes || r.body || ('发现新版本 v'+(r.latest||'')+'，请更新。');
+  const later = document.getElementById('btnUpdateLater');
+  if(later){
+    // 用户要求“弹窗要求更新”：仍保留稍后，但默认强调立即更新
+    later.hidden = false;
+  }
+  modal.hidden = false;
+}
+function dismissUpdateModal(){
+  const modal = document.getElementById('updateModal');
+  if(modal) modal.hidden = true;
+  __updateModalForced = false;
+}
+
+async function acceptUpdateAndDownload(){
+  dismissUpdateModal();
+  setFooterUpdate('正在下载更新…', true);
+  setFooterProgress(0, '准备下载');
+  // 轮询进度
+  if(__updateProgressTimer) clearInterval(__updateProgressTimer);
+  __updateProgressTimer = setInterval(pollUpdateProgress, 400);
+  try{
+    const r = await jsend('/api/update/apply','POST',{});
+    await pollUpdateProgress();
+    if(r && r.ok){
+      setFooterProgress(100, '即将重启…');
+      toast(r.message || '即将安装更新并重启');
+      // 不要 stop/restore：更新脚本会替换 GUI 并重新打开；直接退出当前进程
+      if(typeof window.nativeQuit === 'function'){
+        setTimeout(()=>window.nativeQuit(), 500);
+      }else{
+        setTimeout(()=>{ toast('请关闭窗口以完成文件替换'); }, 800);
+      }
+    }else{
+      setFooterUpdate('更新失败', true);
+      showFooterProgress(false);
+      toast((r && r.message) || '更新失败');
+    }
+  }catch(e){
+    setFooterUpdate('更新失败', true);
+    showFooterProgress(false);
+    toast(e.message || String(e));
+  }finally{
+    if(__updateProgressTimer){ clearInterval(__updateProgressTimer); __updateProgressTimer = null; }
+  }
+}
+
+async function pollUpdateProgress(){
+  try{
+    const p = await jget('/api/update/progress');
+    if(!p) return;
+    if(p.phase === 'idle') return;
+    if(p.phase === 'error'){
+      setFooterProgress(p.percent||0, p.message||'错误');
+      return;
+    }
+    setFooterProgress(p.percent||0, p.message || ((Math.round(p.percent||0))+'%'));
+    if(p.phase === 'done' || p.phase === 'scheduling'){
+      setFooterProgress(100, p.message||'完成');
+    }
+  }catch(_e){}
+}
+
+function startUpdateAutoCheck(){
+  // 打开程序立即检查（强制弹窗）
+  runUpdateCheck({showModal:true, force:true});
+  // 每小时
+  setInterval(()=>runUpdateCheck({showModal:true, force:false}), 3600*1000);
+}
+
+// 覆盖旧的 checkUpdate / applyUpdate，复用底栏逻辑
+async function checkUpdate(){
+  const el=document.getElementById('updateResult');
+  if(el) el.textContent='检查中…';
+  const r = await runUpdateCheck({showModal:true, force:false});
+  if(el && r){
+    el.textContent = (r.message||'') + (r.update_available ? '（可更新）' : '');
+  }
+  return r;
+}
+async function applyUpdate(){
+  return acceptUpdateAndDownload();
+}
+
 async function refreshAll(){ await Promise.all([refreshMetrics(), refreshStatus(), refreshConfig()]); if(currentPage==='models') refreshFamilies(); }
 async function loadVersion(){
   try{

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -40,6 +39,11 @@ const (
 
 func main() {
 	hideConsole()
+	if !ensureSingleInstance() {
+		// 已有实例：尝试前置窗口后退出
+		showMainWindow()
+		return
+	}
 	prefs := desktop.LoadPrefs()
 
 	go systray.Run(func() { onTrayReady() }, func() {})
@@ -78,6 +82,14 @@ func main() {
 	_ = w.Bind("nativeOnline", func() bool { return online() })
 	_ = w.Bind("nativeHideToTray", func() string { hideMainWindow(); return "ok" })
 	_ = w.Bind("nativeShowWindow", func() string { showMainWindow(); return "ok" })
+	_ = w.Bind("nativeQuit", func() string {
+		// 给更新脚本时间启动
+		go func() {
+			time.Sleep(400 * time.Millisecond)
+			os.Exit(0)
+		}()
+		return "ok"
+	})
 
 	w.SetSize(1100, 780, webview2.HintNone)
 	w.Navigate(uiURL)
@@ -342,5 +354,26 @@ func projectRoot() string {
 	return "."
 }
 
-// silence unused in case
-var _ = fmt.Sprintf
+
+// ensureSingleInstance 禁止多个 GUI 同时运行（命名互斥量）。
+func ensureSingleInstance() bool {
+	kernel32 := syscall.NewLazyDLL("kernel32.dll")
+	createMutex := kernel32.NewProc("CreateMutexW")
+	getLastError := kernel32.NewProc("GetLastError")
+	name, err := syscall.UTF16PtrFromString("Local\\DevinBYOK_GUI_Singleton")
+	if err != nil {
+		return true
+	}
+	handle, _, _ := createMutex.Call(0, 1, uintptr(unsafe.Pointer(name)))
+	if handle == 0 {
+		return true
+	}
+	// ERROR_ALREADY_EXISTS = 183
+	errCode, _, _ := getLastError.Call()
+	if errCode == 183 {
+		return false
+	}
+	// 保持互斥量直到进程退出（故意不 CloseHandle）
+	_ = handle
+	return true
+}
