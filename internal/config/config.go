@@ -721,6 +721,78 @@ func (f *File) DefaultModelID() string {
 	return ms[0].ID
 }
 
+
+// compactModelKey 去掉分隔符，便于 grok4.5 对齐 grok-4.5-byok-high。
+func compactModelKey(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// ResolveModelUID 解析 UI/Command 传来的模型标识：精确 ID、忽略大小写、去连字符匹配、family/upstream。
+// 多候选时优先 default_model，其次 medium thinking。
+func (f *File) ResolveModelUID(selectedUID string) (ModelEntry, bool) {
+	selectedUID = strings.TrimSpace(selectedUID)
+	if selectedUID == "" {
+		return ModelEntry{}, false
+	}
+	if m, ok := f.FindModel(selectedUID); ok {
+		return m, true
+	}
+	low := strings.ToLower(selectedUID)
+	list := f.ModelList()
+	for _, m := range list {
+		if strings.ToLower(m.ID) == low {
+			return m, true
+		}
+	}
+	key := compactModelKey(selectedUID)
+	if key == "" {
+		return ModelEntry{}, false
+	}
+	var matches []ModelEntry
+	for _, m := range list {
+		cands := []string{m.ID, m.ResolveUpstream(), m.FamilyUID, m.Family, m.Label}
+		hit := false
+		for _, c := range cands {
+			ck := compactModelKey(c)
+			if ck == "" {
+				continue
+			}
+			if ck == key || strings.HasPrefix(ck, key) || strings.Contains(ck, key) || strings.Contains(key, ck) {
+				hit = true
+				break
+			}
+		}
+		if hit {
+			matches = append(matches, m)
+		}
+	}
+	if len(matches) == 0 {
+		return ModelEntry{}, false
+	}
+	if len(matches) == 1 {
+		return matches[0], true
+	}
+	def := strings.TrimSpace(f.DefaultModelID())
+	for _, m := range matches {
+		if m.ID == def {
+			return m, true
+		}
+	}
+	for _, m := range matches {
+		if NormalizeThinkingLevel(m.Thinking) == "medium" {
+			return m, true
+		}
+	}
+	return matches[0], true
+}
+
 func (f *File) FindModel(selectedUID string) (ModelEntry, bool) {
 	selectedUID = strings.TrimSpace(selectedUID)
 	for _, m := range f.ModelList() {

@@ -433,10 +433,16 @@ func buildGetModelStatusesResponse(cfg *config.File) []byte {
 }
 
 func buildGetCommandModelConfigsResponse(cfg *config.File) []byte {
+	// available_command_models=1, default_command_model=2
+	// 供 Generate Git Commit Message / Review Working Changes 等 Command 功能选模型
 	var b []byte
 	for _, m := range modelEntries(cfg) {
 		mm := m
 		b = pbwire.AppendMessage(b, 1, buildClientModelConfigEntry(cfg, m.ID, m.Label, &mm))
+	}
+	def := cfg.DefaultModelID()
+	if def != "" {
+		b = pbwire.AppendString(b, 2, def)
 	}
 	return b
 }

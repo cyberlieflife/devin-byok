@@ -534,10 +534,46 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []ChatMe
 		data, _ := io.ReadAll(resp.Body)
 		return Usage{}, HumanizeHTTPError(resp.StatusCode, string(data))
 	}
-	sc := bufio.NewScanner(resp.Body)
+
+	// 上游若未按 SSE 返回（仍给 JSON），旧逻辑会一直扫流卡住且无日志。
+	br := bufio.NewReaderSize(resp.Body, 64*1024)
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	prefix, _ := br.Peek(32)
+	prefixTrim := bytes.TrimSpace(prefix)
+	isSSE := strings.Contains(ct, "text/event-stream") || bytes.HasPrefix(prefixTrim, []byte("data:"))
+	if !isSSE {
+		data, err := io.ReadAll(br)
+		if err != nil {
+			return Usage{}, HumanizeError(err)
+		}
+		var parsed chatResponse
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			return Usage{}, fmt.Errorf("upstream non-SSE body parse failed: %v ; body=%s", err, truncate(string(data), 300))
+		}
+		if parsed.Error != nil {
+			return Usage{}, fmt.Errorf("upstream error: %s", parsed.Error.Message)
+		}
+		if len(parsed.Choices) == 0 {
+			return Usage{}, fmt.Errorf("upstream empty choices (non-SSE)")
+		}
+		msg := parsed.Choices[0].Message
+		thinking := firstNonEmpty(msg.ReasoningContent, msg.Reasoning, msg.Thinking)
+		if msg.Content != "" || thinking != "" || len(msg.ToolCalls) > 0 {
+			if err := onDelta(StreamDelta{Content: msg.Content, Thinking: thinking, ToolCalls: msg.ToolCalls}); err != nil {
+				return Usage{}, err
+			}
+		}
+		if parsed.Usage != nil {
+			return parsed.Usage.ToUsage(), nil
+		}
+		return Usage{}, nil
+	}
+
+	sc := bufio.NewScanner(br)
 	buf := make([]byte, 0, 64*1024)
 	sc.Buffer(buf, 1024*1024)
 	var finalUsage Usage
+	gotAny := false
 	for sc.Scan() {
 		line := sc.Text()
 		if !strings.HasPrefix(line, "data:") {
@@ -566,7 +602,7 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []ChatMe
 			continue
 		}
 		if chunk.Error != nil {
-			return Usage{}, fmt.Errorf("上游错误: %s", chunk.Error.Message)
+			return Usage{}, fmt.Errorf("upstream error: %s", chunk.Error.Message)
 		}
 		if chunk.Usage != nil {
 			finalUsage = chunk.Usage.ToUsage()
@@ -579,12 +615,17 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []ChatMe
 		if d.Content == "" && thinking == "" && len(d.ToolCalls) == 0 {
 			continue
 		}
+		gotAny = true
 		if err := onDelta(StreamDelta{Content: d.Content, Thinking: thinking, ToolCalls: d.ToolCalls}); err != nil {
 			return Usage{}, err
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return Usage{}, HumanizeError(err)
+	}
+	if !gotAny && finalUsage.PromptTokens == 0 && finalUsage.CompletionTokens == 0 {
+		// SSE 扫完却无任何 delta：常见于代理返回畸形流
+		return Usage{}, fmt.Errorf("upstream SSE empty stream (no content deltas)")
 	}
 	return finalUsage, nil
 }

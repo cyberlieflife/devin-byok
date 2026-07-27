@@ -391,13 +391,18 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		allowed = append(allowed, m.ID)
 	}
 	// 请求 model_uid 必须能在 family 模型列表中解析；禁止用全局 upstream.model 顶替
-	uiModel := parsed.ModelUID
+	uiModel := strings.TrimSpace(parsed.ModelUID)
 	if uiModel == "" {
 		uiModel = pickModel(plain, cfg.DefaultModelID(), allowed)
 	}
-	if _, ok := cfg.FindModel(uiModel); !ok {
-		// 尝试从 plain 再匹配一次 allowed id
+	// Command/Cascade 可能传来 family/upstream 变体（如 grok4.5）；解析到真实 models[].id
+	if m, ok := cfg.ResolveModelUID(uiModel); ok {
+		uiModel = m.ID
+	} else if _, ok := cfg.FindModel(uiModel); !ok {
 		uiModel = pickModel(plain, cfg.DefaultModelID(), allowed)
+		if m2, ok2 := cfg.ResolveModelUID(uiModel); ok2 {
+			uiModel = m2.ID
+		}
 	}
 	prov, okProv := cfg.ResolveProvider(uiModel)
 	model := prov.UpstreamModel
@@ -466,6 +471,7 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	logx.Infof("chat-like %s userText=%q msg=%s uiModel=%s upstreamModel=%s provider=%s base=%s thinking=%s stream=%v sysPrompt=%d toolsIn=%d toolsOut=%d mode=%s hist=%d plain=%d cascadeTools=%v workspace=%v",
 		method, truncate(userText, 80), msgID, uiModel, model, prov.Provider, truncate(prov.BaseURL, 60), effort, cfg.Features.EnableStream, len(parsed.SystemPrompt), len(parsed.Tools), len(filteredTools), toolsMode, len(parsed.Messages), len(plain), cfg.Features.EnableCascadeTools, workspaceRoots)
 	metricsAddLog("info", fmt.Sprintf("chat model=%s tools=%d %q", uiModel, len(filteredTools), truncate(userText, 60)))
+	metricsAddLog("info", fmt.Sprintf("upstream start model=%s base=%s stream=%v tools=%d timeout=%ds", model, truncate(prov.BaseURL, 80), cfg.Features.EnableStream, len(chatOpt.Tools), cfg.ResolveChatTimeoutSec(len(chatOpt.Tools) > 0)))
 
 	// 响应缓存：无工具时按 model+消息指纹命中
 	cacheKey := ""
@@ -556,10 +562,21 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 
 	if cfg.Features.EnableStream {
 		go func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					done <- chatResult{err: fmt.Errorf("stream panic: %v", rec)}
+				}
+			}()
+			metricsAddLog("info", "upstream streaming...")
 			var content strings.Builder
 			var thinking strings.Builder
 			var tools []openai.ToolCall
+			first := true
 			usage, err := s.chatStream(upCtx, prov, model, msgs, chatOpt, func(d openai.StreamDelta) error {
+				if first {
+					first = false
+					metricsAddLog("info", "upstream first token")
+				}
 				if d.Thinking != "" {
 					thinking.WriteString(d.Thinking)
 					if !writeDelta("", d.Thinking, true) {
@@ -582,6 +599,12 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		}()
 	} else {
 		go func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					done <- chatResult{err: fmt.Errorf("chat panic: %v", rec)}
+				}
+			}()
+			metricsAddLog("info", "upstream non-stream request...")
 			res, err := s.chatOnce(upCtx, prov, model, msgs, chatOpt)
 			done <- chatResult{text: res.Content, thinking: res.Thinking, toolCalls: res.ToolCalls, usage: res.Usage, err: err}
 		}()
@@ -701,6 +724,7 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	metricsAddLog("info", fmt.Sprintf("done model=%s out_tokens~%d tools=%d cacheKey=%v", uiModel, tout, toolN, chatOpt.PromptCacheKey != ""))
 	logx.Infof("chat-like done text=%d thinkingText=%d effort=%s stream=%v model=%s", len(text), len(thinking), effort, cfg.Features.EnableStream, model)
 }
+
 
 
 
@@ -982,7 +1006,7 @@ func pickUserText(body []byte) string {
 
 func pickModel(body []byte, fallback string, allowed []string) string {
 	raw := string(body)
-	// 长 id 优先，避免 "grok-4.5" 抢在 "grok-4.5__2" 前面误匹配
+	// 只允许返回配置内模型 ID，禁止把请求体里的 grok4.5 之类脏串当模型
 	ids := append([]string(nil), allowed...)
 	for i := 0; i < len(ids); i++ {
 		for j := i + 1; j < len(ids); j++ {
@@ -996,14 +1020,25 @@ func pickModel(body []byte, fallback string, allowed []string) string {
 			return id
 		}
 	}
+	// 去分隔符后再匹配 allowed（body 含 grok4.5 时对齐 grok-4.5-byok-*）
 	cands := extractStrings(body, 3)
 	for _, str := range cands {
-		ls := strings.ToLower(str)
-		if strings.Contains(ls, "gpt-") || strings.Contains(ls, "claude") || strings.Contains(ls, "deepseek") || strings.Contains(ls, "grok") {
-			return str
+		for _, id := range ids {
+			if id == "" {
+				continue
+			}
+			if strings.EqualFold(str, id) {
+				return id
+			}
 		}
 	}
-	return fallback
+	if fallback != "" {
+		return fallback
+	}
+	if len(ids) > 0 {
+		return ids[0]
+	}
+	return ""
 }
 
 func sanitize(s string) string {
