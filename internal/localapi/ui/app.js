@@ -89,6 +89,8 @@ async function refreshMetrics(){
     const elCMf=document.getElementById('mCodeMapFail'); if(elCMf) elCMf.textContent=m.codemap_fail??0;
     const elF=document.getElementById('mCodeMapFast'); if(elF) elF.textContent=m.codemap_fast??0;
     const elS=document.getElementById('mCodeMapSmart'); if(elS) elS.textContent=m.codemap_smart??0;
+  const elCmt=document.getElementById('mCommit'); if(elCmt) elCmt.textContent=m.commit_ok??0;
+  const elCmtF=document.getElementById('mCommitFail'); if(elCmtF) elCmtF.textContent=m.commit_fail??0;
     renderFeatureRank(m.feature_model_rank||[]);
     const prompt=m.prompt_tokens||0, cached=m.cached_tokens||0;
     if(prompt>0){ drawPie(cached, Math.max(prompt-cached,0)); document.getElementById('cacheDetail').textContent=`cached ${cached} / prompt ${prompt}`; }
@@ -348,6 +350,7 @@ function fillFeatureModelSelects(models, cfg){
     ['deepwiki_model', (cfg&& (cfg.deepwiki_model||cfg.deepwiki_model_resolved)) || def, 'deepwiki_hint', (cfg&&cfg.deepwiki_model_resolved)||def],
     ['codemap_fast_model', (cfg&& (cfg.codemap_fast_model||cfg.codemap_fast_model_resolved||cfg.codemap_model)) || def, 'codemap_fast_hint', (cfg&&cfg.codemap_fast_model_resolved)||def],
     ['codemap_smart_model', (cfg&& (cfg.codemap_smart_model||cfg.codemap_smart_model_resolved||cfg.codemap_model)) || def, 'codemap_smart_hint', (cfg&&cfg.codemap_smart_model_resolved)||def],
+    ['command_model', (cfg&& (cfg.command_model||cfg.command_model_resolved)) || def, 'command_hint', (cfg&&cfg.command_model_resolved)||def],
   ];
   // 兼容旧页面可能仍有 codemap_model 单选
   if(document.getElementById('codemap_model')){
@@ -365,6 +368,7 @@ async function saveFeatureModels(){
     deepwiki_model: val('deepwiki_model'),
     codemap_fast_model: val('codemap_fast_model'),
     codemap_smart_model: val('codemap_smart_model'),
+    command_model: val('command_model'),
     // 兼容：旧 codemap_model 同步为 smart
     codemap_model: val('codemap_smart_model') || val('codemap_model'),
   };

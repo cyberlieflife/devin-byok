@@ -73,6 +73,8 @@
           <div><div class="label">CodeMap 失败</div><div class="value bad" id="mCodeMapFail">0</div></div>
           <div><div class="label">CodeMap Fast</div><div class="value" id="mCodeMapFast">0</div></div>
           <div><div class="label">CodeMap Smart</div><div class="value" id="mCodeMapSmart">0</div></div>
+          <div><div class="label">Commit 成功</div><div class="value ok" id="mCommit">0</div></div>
+          <div><div class="label">Commit 失败</div><div class="value bad" id="mCommitFail">0</div></div>
         </div>
       </div>
       <div class="card">
@@ -106,8 +108,8 @@
     </section>
     <div class="card feature-model-card">
       <div class="card-h">功能模型绑定</div>
-      <p class="muted small">DeepWiki 与 CodeMap（Fast / Smart）各自绑定下方已有模型变体；保存后热重载。若此处不可见请重启 devin-byok 服务。</p>
-      <div class="feature-bind-grid">
+      <p class="muted small">DeepWiki、CodeMap、Commit 消息各自绑定下方已有模型变体；保存后热重载。若此处不可见请重启 GUI/服务。</p>
+      <div class="feature-bind-grid" style="grid-template-columns:1fr 1fr;">
         <div class="feature-bind">
           <div class="feature-bind-title">DeepWiki</div>
           <div class="field">
@@ -131,6 +133,14 @@
             <select id="codemap_smart_model"></select>
           </div>
           <div class="muted small" id="codemap_smart_hint">生效：-</div>
+        </div>
+        <div class="feature-bind">
+          <div class="feature-bind-title">Commit 消息</div>
+          <div class="field">
+            <label>Generate Git Commit Message</label>
+            <select id="command_model"></select>
+          </div>
+          <div class="muted small" id="command_hint">生效：-</div>
         </div>
       </div>
       <div class="row gap" style="margin-top:8px">
