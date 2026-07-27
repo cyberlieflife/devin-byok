@@ -158,12 +158,12 @@ async function refreshFamilies(){
     const fams=res.families||[];
     window.__fams={};
     fams.forEach(f=>{window.__fams[f.uid]=f});
-    if(!fams.length){box.innerHTML='<div class="card muted">还没有 Family，点击右上角添加</div>'; return}
+    if(!fams.length){box.innerHTML='<div class="card muted">还没有模型，点击右上角添加</div>'; return}
     box.innerHTML=fams.map(f=>`
       <div class="card family-card">
         <h3>${escapeHtml(f.label||f.uid)}</h3>
         <div class="muted small mono">${escapeHtml(f.uid)}</div>
-        <div class="muted small" style="margin-top:6px">${escapeHtml(f.provider||'openai')} · ctx ${f.context_window?formatCompact(f.context_window):'-'} · max_out ${f.max_tokens?formatCompact(f.max_tokens):'-'}</div>
+        <div class="muted small" style="margin-top:6px">${escapeHtml(providerLabel(f.provider))} · ctx ${f.context_window?formatCompact(f.context_window):'-'} · max_out ${f.max_tokens?formatCompact(f.max_tokens):'-'}</div>
         <div class="muted small mono" style="margin-top:4px">${escapeHtml(f.base_url||'(no base_url)')}</div>
         <div class="muted small">key: ${f.api_key_set?(f.api_key_masked||'****'):'未设置'} · model: ${escapeHtml(f.upstream_model||'-')}</div>
         <div class="chip-row">
@@ -263,61 +263,113 @@ function waitOnline(ms){
     resolve(false);
   });
 }
-function openFamilyModal(){
-  document.getElementById('f_label').value='';
-  document.getElementById('f_uid').value='';
-  document.getElementById('f_provider').value='openai';
-  document.getElementById('f_base').value='';
-  document.getElementById('f_key').value='';
-  document.getElementById('f_upstream').value='';
-  document.getElementById('f_ctx').value=128000;
-  document.getElementById('f_max').value=8192;
-  document.getElementById('f_levels').value='low,medium,high';
-  document.getElementById('familyModal').hidden=false;
+
+function slugish(s){
+  return String(s||'').trim().toLowerCase()
+    .replace(/[^a-z0-9]+/g,'-')
+    .replace(/^-+|-+$/g,'')
+    .replace(/-+/g,'-');
 }
-function closeFamilyModal(){ document.getElementById('familyModal').hidden=true }
-function editFamilyByUid(uid){ const f=window.__fams[uid]; if(!f){toast('family 不存在');return;} editFamily(f);}
+function ensureByokUID(raw){
+  let s = slugish(raw);
+  if(s.endsWith('-byok')) s = s.slice(0,-5);
+  s = s.replace(/^-+|-+$/g,'');
+  if(!s) s = 'model';
+  return s + '-byok';
+}
+function providerLabel(p){
+  p = String(p||'openai').toLowerCase();
+  if(p==='anthropic') return 'Anthropic';
+  if(p==='responses') return 'OpenAI Responses';
+  return 'OpenAI 兼容';
+}
+function selectedLevels(){
+  return [...document.querySelectorAll('.f-level:checked')].map(x=>x.value);
+}
+function setLevels(levels){
+  const set = new Set((levels||[]).map(x=>String(x).toLowerCase()));
+  document.querySelectorAll('.f-level').forEach(cb=>{
+    cb.checked = set.size ? set.has(cb.value) : (cb.value==='low'||cb.value==='medium'||cb.value==='high');
+  });
+}
+function refreshUidHint(){
+  const label = (document.getElementById('f_label')||{}).value || '';
+  const up = (document.getElementById('f_upstream')||{}).value || '';
+  const existing = (document.getElementById('f_uid')||{}).value || '';
+  const uid = existing ? ensureByokUID(existing) : ensureByokUID(label || up);
+  const hint = document.getElementById('f_uid_hint');
+  if(hint) hint.textContent = 'Family UID 将自动生成为：' + (uid || '-');
+}
+function openFamilyModal(){
+  const title = document.getElementById('familyModalTitle');
+  if(title) title.textContent = '添加模型';
+  document.getElementById('f_uid').value = '';
+  document.getElementById('f_label').value = '';
+  document.getElementById('f_upstream').value = '';
+  document.getElementById('f_provider').value = 'openai';
+  document.getElementById('f_base').value = '';
+  document.getElementById('f_key').value = '';
+  document.getElementById('f_key').placeholder = 'sk-...';
+  document.getElementById('f_ctx').value = 128000;
+  document.getElementById('f_max').value = 8192;
+  setLevels(['low','medium','high']);
+  refreshUidHint();
+  document.getElementById('familyModal').hidden = false;
+}
+function closeFamilyModal(){ document.getElementById('familyModal').hidden = true }
+function editFamilyByUid(uid){ const f=window.__fams[uid]; if(!f){toast('模型不存在');return;} editFamily(f);}
 function editFamily(f){
-  document.getElementById('f_label').value=f.label||'';
-  document.getElementById('f_uid').value=f.uid||'';
-  document.getElementById('f_provider').value=f.provider||'openai';
-  document.getElementById('f_base').value=f.base_url||'';
-  document.getElementById('f_key').value='';
-  document.getElementById('f_key').placeholder=f.api_key_set?('当前: '+(f.api_key_masked||'****')):'未设置';
-  document.getElementById('f_upstream').value=f.upstream_model||(f.variants&&f.variants[0]&&f.variants[0].upstream_model)||'';
-  document.getElementById('f_ctx').value=f.context_window||128000;
-  document.getElementById('f_max').value=f.max_tokens||8192;
-  const levels=(f.variants||[]).map(v=>v.thinking).filter(Boolean);
-  document.getElementById('f_levels').value=levels.length?levels.join(','):'low,medium,high';
-  document.getElementById('familyModal').hidden=false;
+  const title = document.getElementById('familyModalTitle');
+  if(title) title.textContent = '编辑模型';
+  document.getElementById('f_uid').value = f.uid || '';
+  document.getElementById('f_label').value = f.label || '';
+  document.getElementById('f_provider').value = f.provider || 'openai';
+  document.getElementById('f_base').value = f.base_url || '';
+  document.getElementById('f_key').value = '';
+  document.getElementById('f_key').placeholder = f.api_key_set ? ('当前: '+(f.api_key_masked||'****')) : '未设置';
+  document.getElementById('f_upstream').value = f.upstream_model || (f.variants&&f.variants[0]&&f.variants[0].upstream_model) || '';
+  document.getElementById('f_ctx').value = f.context_window || 128000;
+  document.getElementById('f_max').value = f.max_tokens || 8192;
+  const levels = (f.variants||[]).map(v=>v.thinking).filter(Boolean);
+  setLevels(levels.length ? levels : ['low','medium','high']);
+  refreshUidHint();
+  document.getElementById('familyModal').hidden = false;
 }
 async function saveFamily(){
-  const body={
-    label:document.getElementById('f_label').value.trim(),
-    uid:document.getElementById('f_uid').value.trim(),
-    provider:document.getElementById('f_provider').value,
-    base_url:document.getElementById('f_base').value.trim(),
-    api_key:document.getElementById('f_key').value.trim(),
-    upstream_model:document.getElementById('f_upstream').value.trim(),
-    context_window:Number(document.getElementById('f_ctx').value||0),
-    max_tokens:Number(document.getElementById('f_max').value||0),
-    levels:document.getElementById('f_levels').value.split(',').map(s=>s.trim()).filter(Boolean),
+  const label = document.getElementById('f_label').value.trim();
+  const upstream = document.getElementById('f_upstream').value.trim();
+  if(!label){ toast('请填写显示名 Label'); return }
+  if(!upstream){ toast('请填写上游模型 ID'); return }
+  const existing = document.getElementById('f_uid').value.trim();
+  const uid = existing ? ensureByokUID(existing) : ensureByokUID(label || upstream);
+  const levels = selectedLevels();
+  if(!levels.length){ toast('请至少选择一种思考强度'); return }
+  const body = {
+    label,
+    uid,
+    provider: document.getElementById('f_provider').value,
+    base_url: document.getElementById('f_base').value.trim(),
+    api_key: document.getElementById('f_key').value.trim(),
+    upstream_model: upstream,
+    context_window: Number(document.getElementById('f_ctx').value||0),
+    max_tokens: Number(document.getElementById('f_max').value||0),
+    levels,
   };
-  if(!body.label){ toast('请填写 Label'); return }
   try{
-    await jsend('/api/families','POST',body);
-    toast('Family 已保存');
+    await jsend('/api/families','POST', body);
+    toast('模型已保存');
     closeFamilyModal();
     refreshFamilies();
   }catch(e){ toast(e.message) }
 }
 async function deleteFamily(uid){
-  if(!confirm('删除 family '+uid+' 及其所有思考强度变体？')) return;
+  if(!confirm('删除模型 '+uid+' 及其所有思考强度变体？')) return;
   try{
     await jsend('/api/families?uid='+encodeURIComponent(uid),'DELETE');
     toast('已删除'); refreshFamilies();
   }catch(e){ toast(e.message) }
 }
+
 function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function fmtDur(sec){const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60; return (h?h+'h ':'')+(m?m+'m ':'')+s+'s'}
 
@@ -504,7 +556,7 @@ async function saveUpdatePrefs(){
 
 // ===== 底栏更新状态 + 弹窗 + 进度 =====
 // 与 internal/version.Version 保持一致（硬编码兜底，避免接口未就绪显示 v?）
-const APP_VERSION = '1.2.7';
+const APP_VERSION = '1.2.8';
 let __lastUpdateCheck = null;
 let __updateProgressTimer = null;
 let __updateModalForced = false;
@@ -720,3 +772,5 @@ loadFooterVersion();
 refreshAll();
 startUpdateAutoCheck();
 setInterval(refreshMetrics, 2000);
+['f_label','f_upstream'].forEach(id=>{ const el=document.getElementById(id); if(el){ el.addEventListener('input', refreshUidHint); }});
+

@@ -79,7 +79,7 @@ type FamilyConfig struct {
 	ContextWindow int    `yaml:"context_window" json:"context_window"`
 	MaxTokens     int    `yaml:"max_tokens" json:"max_tokens"`
 	// 供应商配置（family 内所有思考强度变体默认共用）
-	Provider      string            `yaml:"provider" json:"provider"` // openai | anthropic
+	Provider      string            `yaml:"provider" json:"provider"` // openai | responses | anthropic
 	BaseURL       string            `yaml:"base_url" json:"base_url"`
 	APIKey        string            `yaml:"api_key" json:"api_key"`
 	UpstreamModel string            `yaml:"upstream_model" json:"upstream_model"`
@@ -1013,17 +1013,23 @@ type FamilyUpsertInput struct {
 
 // UpsertFamilyPresets 创建/更新 family 的供应商与思考强度变体。
 func (f *File) UpsertFamilyPresets(in FamilyUpsertInput) {
-	uid := strings.TrimSpace(in.UID)
 	label := strings.TrimSpace(in.Label)
-	if uid == "" {
-		uid = slugID(label)
-	}
-	if label == "" {
-		label = uid
-	}
 	up := strings.TrimSpace(in.UpstreamModel)
 	if up == "" {
 		up = firstNonEmpty(f.Upstream.Model, label)
+	}
+	// 优先保留编辑时传入的 uid；否则由 label/上游模型自动生成并强制 -byok
+	uid := strings.TrimSpace(in.UID)
+	if uid == "" {
+		uid = EnsureByokUID(firstNonEmpty(label, up))
+	} else {
+		uid = EnsureByokUID(uid)
+	}
+	if label == "" {
+		label = strings.TrimSuffix(uid, "-byok")
+		if label == "" {
+			label = up
+		}
 	}
 	levels := in.Levels
 	if len(levels) == 0 {
@@ -1149,9 +1155,22 @@ func NormalizeProvider(p string) string {
 	switch strings.ToLower(strings.TrimSpace(p)) {
 	case "anthropic", "claude":
 		return "anthropic"
+	case "responses", "openai_responses", "response", "oai_responses":
+		return "responses"
 	default:
 		return "openai"
 	}
+}
+
+// EnsureByokUID 生成/规范化 family uid：自动带 -byok 后缀。
+func EnsureByokUID(raw string) string {
+	s := slugID(strings.TrimSpace(raw))
+	s = strings.TrimSuffix(s, "-byok")
+	s = strings.Trim(s, "-")
+	if s == "" {
+		s = "model"
+	}
+	return s + "-byok"
 }
 
 // migrateProviderToFamilies 把旧版全局 upstream.base_url/api_key 下沉到尚无供应商配置的 family。
