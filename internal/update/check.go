@@ -217,20 +217,16 @@ start "" "%%DST%%\devin-byok.exe" start
 start "" "%%DST%%\devin-byok-gui.exe"
 endlocal
 `, extractDir, installDir)
-	// Fix the batch - I used wrong escaping. Write proper batch.
 	content = "@echo off\r\n" +
 		"setlocal\r\n" +
 		"echo [devin-byok] applying update...\r\n" +
 		"timeout /t 2 /nobreak >nul\r\n" +
 		"set \"SRC=" + extractDir + "\"\r\n" +
 		"set \"DST=" + installDir + "\"\r\n" +
-		"copy /Y \"%SRC%\\devin-byok.exe\" \"%DST%\\devin-byok.exe\"\r\n" +
 		"copy /Y \"%SRC%\\devin-byok-gui.exe\" \"%DST%\\devin-byok-gui.exe\"\r\n" +
-		"if exist \"%SRC%\\devin-byok-ls-wrapper.exe\" copy /Y \"%SRC%\\devin-byok-ls-wrapper.exe\" \"%DST%\\devin-byok-ls-wrapper.exe\"\r\n" +
-		"if exist \"%SRC%\\README.md\" copy /Y \"%SRC%\\README.md\" \"%DST%\\README.md\"\r\n" +
 		"if exist \"%SRC%\\config.example.yaml\" copy /Y \"%SRC%\\config.example.yaml\" \"%DST%\\config.example.yaml\"\r\n" +
+		"if exist \"%SRC%\\START.txt\" copy /Y \"%SRC%\\START.txt\" \"%DST%\\START.txt\"\r\n" +
 		"echo [devin-byok] update applied to %DST%\r\n" +
-		"start \"\" \"%DST%\\devin-byok.exe\" start\r\n" +
 		"start \"\" \"%DST%\\devin-byok-gui.exe\"\r\n" +
 		"endlocal\r\n"
 	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {

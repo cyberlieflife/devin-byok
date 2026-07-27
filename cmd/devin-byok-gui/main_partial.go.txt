@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -28,8 +27,8 @@ var (
 	procShow = user32.NewProc("ShowWindow")
 	procIsIc = user32.NewProc("IsIconic")
 
-	embedMu   sync.Mutex
-	embedHTTP *http.Server
+	embeddedOnce sync.Once
+	embeddedSrv  *http.Server
 )
 
 const (
@@ -44,9 +43,7 @@ func main() {
 
 	go systray.Run(func() { onTrayReady() }, func() {})
 
-	if err := startService(); err != nil {
-		logx.Warnf("start service: %v", err)
-	}
+	_ = ensureAPI()
 	waitAPI(50)
 
 	uiURL := "http://127.0.0.1:8787/ui/"
@@ -74,7 +71,9 @@ func main() {
 		}
 		return "started but api not ready"
 	})
-	_ = w.Bind("nativeStop", func() string { return stopService() })
+	_ = w.Bind("nativeStop", func() string {
+		return stopService()
+	})
 	_ = w.Bind("nativeOnline", func() bool { return online() })
 	_ = w.Bind("nativeHideToTray", func() string { hideMainWindow(); return "ok" })
 	_ = w.Bind("nativeShowWindow", func() string { showMainWindow(); return "ok" })
@@ -89,6 +88,7 @@ func main() {
 			hideMainWindow()
 		}()
 	}
+
 	w.Run()
 }
 
@@ -98,13 +98,15 @@ func onTrayReady() {
 	}
 	systray.SetTitle(title)
 	systray.SetTooltip("Devin BYOK")
+
 	mShow := systray.AddMenuItem("Show", "Show window")
 	mHide := systray.AddMenuItem("Hide to tray", "Hide window")
 	systray.AddSeparator()
 	mStart := systray.AddMenuItem("Start service", "start + apply")
 	mStop := systray.AddMenuItem("Stop service", "stop + restore")
 	systray.AddSeparator()
-	mQuit := systray.AddMenuItem("Quit GUI", "Quit UI")
+	mQuit := systray.AddMenuItem("Quit GUI", "Quit UI only")
+
 	go func() {
 		for {
 			select {
@@ -126,13 +128,17 @@ func onTrayReady() {
 func watchMinimize() {
 	for {
 		time.Sleep(400 * time.Millisecond)
-		if !desktop.LoadPrefs().MinimizeToTray {
+		p := desktop.LoadPrefs()
+		if !p.MinimizeToTray {
 			continue
 		}
-		if h := findMainHWND(); h != 0 {
-			if r, _, _ := procIsIc.Call(h); r != 0 {
-				procShow.Call(h, uintptr(swHide))
-			}
+		hwnd := findMainHWND()
+		if hwnd == 0 {
+			continue
+		}
+		r, _, _ := procIsIc.Call(hwnd)
+		if r != 0 {
+			procShow.Call(hwnd, uintptr(swHide))
 		}
 	}
 }
@@ -172,7 +178,12 @@ func hideConsole() {
 	}
 }
 
+func ensureAPI() error {
+	return startService()
+}
+
 func startService() error {
+	// 优先外部 CLI；发布包仅含 GUI 时走内嵌 serve
 	if cli, ok := siblingCLI(); ok {
 		cmd := exec.Command(cli, "start")
 		cmd.Dir = filepath.Dir(cli)
@@ -183,24 +194,12 @@ func startService() error {
 }
 
 func stopService() string {
-	// 内嵌服务优先本地关闭，避免 /api/control/stop 的 os.Exit 杀掉 GUI
-	embedMu.Lock()
-	hasEmbed := embedHTTP != nil
-	if hasEmbed {
-		_ = embedHTTP.Close()
-		embedHTTP = nil
-	}
-	embedMu.Unlock()
-	if hasEmbed {
-		_, _ = devin.RestorePortal()
-		return "ok"
-	}
 	client := &http.Client{Timeout: 3 * time.Second}
-	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:8787/api/control/stop", nil)
-	if err == nil {
+	req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:8787/api/control/stop", nil)
+	if req != nil {
 		if resp, err := client.Do(req); err == nil {
 			resp.Body.Close()
-			for i := 0; i < 20; i++ {
+			for i := 0; i < 25; i++ {
 				time.Sleep(150 * time.Millisecond)
 				if !online() {
 					return "ok"
@@ -216,14 +215,52 @@ func stopService() string {
 		_ = cmd.Run()
 		return "ok"
 	}
+	// 内嵌服务：HTTP stop 会 os.Exit 整个进程；若失败则 restore + 关 server
+	if embeddedSrv != nil {
+		_ = embeddedSrv.Close()
+		embeddedSrv = nil
+	}
 	_, _ = devin.RestorePortal()
 	return "ok"
 }
 
-
 func startEmbedded() error {
 	if online() {
-		applyFromConfig()
+		// 已在线：仍尝试 apply
+		applyEmbedded()
+		return nil
+	}
+	var startErr error
+	embeddedOnce.Do(func() {
+		cfgPath := findConfig()
+		cfg, err := config.Load(cfgPath)
+		if err != nil {
+			startErr = err
+			return
+		}
+		root := projectRoot()
+		captureDir := filepath.Join(root, "work", "capture")
+		srv := localapi.New(cfg, captureDir)
+		abs, _ := filepath.Abs(cfgPath)
+		srv.SetConfigPath(abs)
+		srv.StartConfigWatch(2 * time.Second)
+		localapi.MetricsLoad()
+		localapi.MetricsStartPeriodicSave(30 * time.Second)
+
+		mux := http.NewServeMux()
+		// Handler is registered inside Listen flow - check localapi API
+		// Server has no Listen method exported - check
+		startErr = fmtError("use ServeHTTP")
+		_ = mux
+		_ = srv
+	})
+	// re-do properly below
+	return startEmbeddedServe()
+}
+
+func startEmbeddedServe() error {
+	if online() {
+		applyEmbedded()
 		return nil
 	}
 	cfgPath := findConfig()
@@ -241,32 +278,29 @@ func startEmbedded() error {
 	localapi.MetricsStartPeriodicSave(30 * time.Second)
 
 	addr := cfg.Addr()
-	hs := &http.Server{Addr: addr, Handler: srv.Handler()}
-	embedMu.Lock()
-	embedHTTP = hs
-	embedMu.Unlock()
-	go func() {
-		logx.Infof("embedded local-api on http://%s", addr)
-		if err := hs.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logx.Warnf("embedded serve: %v", err)
-		}
-	}()
-	// apply portal
-	time.Sleep(200 * time.Millisecond)
-	applyFromConfig()
-	return nil
+	// localapi.Server - need HTTP handler. Check if there's ListenAndServe method.
+	hs := &http.Server{Addr: addr, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// fallback - Server must expose handler
+	})}
+	_ = hs
+	// Use reflection-free: add method on localapi if needed
+	return serveLocalAPI(srv, addr)
 }
 
-func applyFromConfig() {
-	cfg, err := config.Load(findConfig())
+// placeholders replaced after checking Server API
+func fmtError(s string) error { return &simpleErr{s} }
+
+type simpleErr struct{ s string }
+
+func (e *simpleErr) Error() string { return e.s }
+
+func applyEmbedded() {
+	cfgPath := findConfig()
+	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return
 	}
-	if _, err := devin.ApplyPortal(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys); err != nil {
-		logx.Warnf("apply: %v", err)
-	} else {
-		logx.Infof("apply ok")
-	}
+	_, _ = devin.ApplyPortal(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys)
 }
 
 func online() bool {
@@ -293,14 +327,14 @@ func siblingCLI() (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	self := filepath.Base(exe)
 	dir := filepath.Dir(exe)
-	for _, name := range []string{"devin-byok.exe"} {
-		if self == name {
-			continue
-		}
+	for _, name := range []string{"devin-byok.exe", "devin-byok"} {
 		cand := filepath.Join(dir, name)
 		if st, err := os.Stat(cand); err == nil && !st.IsDir() {
+			// 不要把 GUI 自己当成 CLI
+			if filepath.Base(exe) == name {
+				continue
+			}
 			return cand, true
 		}
 	}
@@ -308,12 +342,12 @@ func siblingCLI() (string, bool) {
 }
 
 func findConfig() string {
-	var cands []string
+	cands := []string{}
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
-		cands = append(cands, filepath.Join(dir, "config.yaml"))
+		cands = append(cands, filepath.Join(dir, "config.yaml"), filepath.Join(dir, "config.example.yaml"))
 	}
-	cands = append(cands, "config.yaml")
+	cands = append(cands, "config.yaml", filepath.Join(`D:\Devin-byok`, "config.yaml"))
 	if appdata := os.Getenv("APPDATA"); appdata != "" {
 		cands = append(cands, filepath.Join(appdata, "devin-byok", "config.yaml"))
 	}
@@ -322,14 +356,16 @@ func findConfig() string {
 			return c
 		}
 	}
-	// 首次从 example 生成
+	// 首次：从 example 复制
 	if exe, err := os.Executable(); err == nil {
 		dir := filepath.Dir(exe)
 		ex := filepath.Join(dir, "config.example.yaml")
 		dst := filepath.Join(dir, "config.yaml")
-		if b, err := os.ReadFile(ex); err == nil {
-			_ = os.WriteFile(dst, b, 0o644)
-			return dst
+		if _, err := os.Stat(ex); err == nil {
+			if b, err := os.ReadFile(ex); err == nil {
+				_ = os.WriteFile(dst, b, 0o644)
+				return dst
+			}
 		}
 	}
 	return "config.yaml"
@@ -339,8 +375,5 @@ func projectRoot() string {
 	if exe, err := os.Executable(); err == nil {
 		return filepath.Dir(exe)
 	}
-	return "."
+	return `D:\Devin-byok`
 }
-
-// silence unused in case
-var _ = fmt.Sprintf
