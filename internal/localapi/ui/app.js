@@ -8,6 +8,21 @@ async function jsend(url, method, body){
   if(!r.ok) throw new Error(data.error||data.message||t||r.statusText);
   return data;
 }
+
+// 数量紧凑显示：不足 1000 原样；否则 K/M/B 保留 2 位小数
+function formatCompact(n){
+  n = Number(n);
+  if(!isFinite(n)) return '0';
+  const sign = n < 0 ? '-' : '';
+  let v = Math.abs(n);
+  if(v < 1000) return sign + String(Math.round(v));
+  let unit = 'K';
+  if(v >= 1e9){ v = v/1e9; unit = 'B'; }
+  else if(v >= 1e6){ v = v/1e6; unit = 'M'; }
+  else { v = v/1e3; unit = 'K'; }
+  return sign + v.toFixed(2) + unit;
+}
+
 function toast(msg){const el=document.getElementById('toast'); el.textContent=msg; el.style.display='block'; setTimeout(()=>el.style.display='none',2800)}
 function showPage(name){
   currentPage=name;
@@ -81,8 +96,8 @@ async function refreshMetrics(){
     const m=await jget('/api/metrics');
     document.getElementById('mOk').textContent=m.req_ok??0;
     document.getElementById('mFail').textContent=m.req_fail??0;
-    document.getElementById('mTin').textContent=m.tokens_in??0;
-    document.getElementById('mTout').textContent=m.tokens_out??0;
+    document.getElementById('mTin').textContent=formatCompact(m.tokens_in??0);
+    document.getElementById('mTout').textContent=formatCompact(m.tokens_out??0);
     const elDW=document.getElementById('mDeepWiki'); if(elDW) elDW.textContent=m.deepwiki_ok??0;
     const elDWf=document.getElementById('mDeepWikiFail'); if(elDWf) elDWf.textContent=m.deepwiki_fail??0;
     const elCM=document.getElementById('mCodeMap'); if(elCM) elCM.textContent=m.codemap_ok??0;
@@ -93,7 +108,7 @@ async function refreshMetrics(){
   const elCmtF=document.getElementById('mCommitFail'); if(elCmtF) elCmtF.textContent=m.commit_fail??0;
     renderFeatureRank(m.feature_model_rank||[]);
     const prompt=m.prompt_tokens||0, cached=m.cached_tokens||0;
-    if(prompt>0){ drawPie(cached, Math.max(prompt-cached,0)); document.getElementById('cacheDetail').textContent=`cached ${cached} / prompt ${prompt}`; }
+    if(prompt>0){ drawPie(cached, Math.max(prompt-cached,0)); document.getElementById('cacheDetail').textContent=`cached ${formatCompact(cached)} / prompt ${formatCompact(prompt)}`; }
     else { drawPie(m.cache_hit||0, m.cache_miss||0); document.getElementById('cacheDetail').textContent=`local hit ${m.cache_hit||0} / miss ${m.cache_miss||0}`; }
     renderRank(m.model_rank||[]);
     renderLogs(m.logs||[]);
@@ -148,7 +163,7 @@ async function refreshFamilies(){
       <div class="card family-card">
         <h3>${escapeHtml(f.label||f.uid)}</h3>
         <div class="muted small mono">${escapeHtml(f.uid)}</div>
-        <div class="muted small" style="margin-top:6px">${escapeHtml(f.provider||'openai')} · ctx ${f.context_window||'-'} · max_out ${f.max_tokens||'-'}</div>
+        <div class="muted small" style="margin-top:6px">${escapeHtml(f.provider||'openai')} · ctx ${f.context_window?formatCompact(f.context_window):'-'} · max_out ${f.max_tokens?formatCompact(f.max_tokens):'-'}</div>
         <div class="muted small mono" style="margin-top:4px">${escapeHtml(f.base_url||'(no base_url)')}</div>
         <div class="muted small">key: ${f.api_key_set?(f.api_key_masked||'****'):'未设置'} · model: ${escapeHtml(f.upstream_model||'-')}</div>
         <div class="chip-row">

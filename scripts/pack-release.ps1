@@ -25,6 +25,18 @@ if ($LASTEXITCODE -ne 0) { throw "ls-wrapper build failed" }
 $ld = "-X devin-byok/internal/version.Version=$Version -X devin-byok/internal/version.BuildTime=$(Get-Date -Format yyyy-MM-ddTHH:mm:ss)"
 # CLI 仅供开发调试，不打进 zip
 go build -ldflags $ld -o devin-byok.exe ./cmd/devin-byok
+# 嵌入 Windows 应用图标（资源管理器/任务栏）
+$rsrc = Join-Path (go env GOPATH) "bin\rsrc.exe"
+if (-not (Test-Path $rsrc)) {
+  go install github.com/akavel/rsrc@latest
+  $rsrc = Join-Path (go env GOPATH) "bin\rsrc.exe"
+}
+if (Test-Path $rsrc) {
+  & $rsrc -ico ".\internal\desktop\icon.ico" -arch amd64 -o ".\cmd\devin-byok-gui\rsrc_windows_amd64.syso"
+  if ($LASTEXITCODE -ne 0) { throw "rsrc icon embed failed" }
+} else {
+  Write-Host "WARN: rsrc not found; GUI may lack Windows file icon"
+}
 go build -ldflags "-H windowsgui -s -w $ld" -o devin-byok-gui.exe ./cmd/devin-byok-gui
 
 $dist = Join-Path $Root "dist"

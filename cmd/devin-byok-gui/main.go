@@ -136,6 +136,7 @@ func main() {
 
 	w.SetSize(1100, 780, webview2.HintNone)
 	w.Navigate(uiURL)
+	setWindowIconFromICO()
 
 	go watchMinimize()
 	if prefs.StartMinimized {
@@ -398,4 +399,57 @@ func ensureSingleInstance() bool {
 	}
 	singletonMutex = handle
 	return true
+}
+
+// setWindowIconFromICO 将嵌入的 Devin 产品图标设为窗口/任务栏图标。
+func setWindowIconFromICO() {
+	if len(desktop.IconICO) == 0 {
+		return
+	}
+	dir := filepath.Join(os.Getenv("APPDATA"), "devin-byok")
+	_ = os.MkdirAll(dir, 0o755)
+	icoPath := filepath.Join(dir, "app-icon.ico")
+	if err := os.WriteFile(icoPath, desktop.IconICO, 0o644); err != nil {
+		return
+	}
+	// 等窗口创建
+	go func() {
+		for i := 0; i < 50; i++ {
+			h := findMainHWND()
+			if h != 0 {
+				applyIconFile(h, icoPath)
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}()
+}
+
+func applyIconFile(hwnd uintptr, icoPath string) {
+	// LoadImageW IMAGE_ICON=1, LR_LOADFROMFILE=0x10, LR_DEFAULTSIZE=0x40
+	const (
+		imageIcon     = 1
+		lrLoadFromFile = 0x00000010
+		lrDefaultSize  = 0x00000040
+		wmSetIcon      = 0x0080
+		iconSmall      = 0
+		iconBig        = 1
+	)
+	user32 := syscall.NewLazyDLL("user32.dll")
+	loadImage := user32.NewProc("LoadImageW")
+	sendMessage := user32.NewProc("SendMessageW")
+	pathPtr, err := syscall.UTF16PtrFromString(icoPath)
+	if err != nil {
+		return
+	}
+	// big 32
+	hBig, _, _ := loadImage.Call(0, uintptr(unsafe.Pointer(pathPtr)), imageIcon, 32, 32, lrLoadFromFile)
+	// small 16
+	hSmall, _, _ := loadImage.Call(0, uintptr(unsafe.Pointer(pathPtr)), imageIcon, 16, 16, lrLoadFromFile)
+	if hBig != 0 {
+		sendMessage.Call(hwnd, wmSetIcon, iconBig, hBig)
+	}
+	if hSmall != 0 {
+		sendMessage.Call(hwnd, wmSetIcon, iconSmall, hSmall)
+	}
 }

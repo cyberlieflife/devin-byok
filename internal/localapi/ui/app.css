@@ -13,7 +13,7 @@ body{margin:0;background:var(--canvas);color:var(--ink);font-family:var(--font);
 .app{max-width:1100px;margin:0 auto;padding:20px 24px 48px}
 .top{display:flex;justify-content:space-between;align-items:center;gap:16px;padding-bottom:16px;border-bottom:1px solid var(--hairline);margin-bottom:24px}
 .brand{display:flex;gap:12px;align-items:center}
-.logo{width:36px;height:36px;border-radius:8px;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:11px;letter-spacing:.04em}
+.logo{width:36px;height:36px;border-radius:8px;object-fit:cover;display:block;background:transparent;flex:0 0 36px;box-shadow:0 0 0 1px var(--hairline)}
 .title{font-size:16px;font-weight:600}.sub{font-size:12px;color:var(--muted)}
 .top-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--hairline);background:var(--card);border-radius:999px;padding:6px 10px;font-size:12px;color:var(--body)}
