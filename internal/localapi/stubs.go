@@ -440,7 +440,10 @@ func buildGetCommandModelConfigsResponse(cfg *config.File) []byte {
 		mm := m
 		b = pbwire.AppendMessage(b, 1, buildClientModelConfigEntry(cfg, m.ID, m.Label, &mm))
 	}
-	def := cfg.DefaultModelID()
+	def := strings.TrimSpace(cfg.FeatureModelID("command"))
+	if def == "" {
+		def = cfg.DefaultModelID()
+	}
 	if def != "" {
 		b = pbwire.AppendString(b, 2, def)
 	}

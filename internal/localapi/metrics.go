@@ -36,6 +36,8 @@ type RuntimeMetrics struct {
 	CodeMapFail  int64
 	CodeMapFast  int64
 	CodeMapSmart int64
+	CommitOK     int64
+	CommitFail   int64
 	FeatureModel map[string]int64
 
 	ModelCounts map[string]int64
@@ -57,6 +59,8 @@ type metricsPersist struct {
 	CodeMapFail  int64            `json:"codemap_fail"`
 	CodeMapFast  int64            `json:"codemap_fast"`
 	CodeMapSmart int64            `json:"codemap_smart"`
+	CommitOK     int64            `json:"commit_ok"`
+	CommitFail   int64            `json:"commit_fail"`
 	FeatureModel map[string]int64 `json:"feature_model"`
 
 	ReqTotal         int64            `json:"req_total"`
@@ -119,6 +123,8 @@ func MetricsLoad() {
 	runtimeStats.CodeMapFail = p.CodeMapFail
 	runtimeStats.CodeMapFast = p.CodeMapFast
 	runtimeStats.CodeMapSmart = p.CodeMapSmart
+	runtimeStats.CommitOK = p.CommitOK
+	runtimeStats.CommitFail = p.CommitFail
 	if p.FeatureModel != nil {
 		runtimeStats.FeatureModel = p.FeatureModel
 	}
@@ -141,6 +147,7 @@ func MetricsSave() {
 		DeepWikiOK: runtimeStats.DeepWikiOK, DeepWikiFail: runtimeStats.DeepWikiFail,
 		CodeMapOK: runtimeStats.CodeMapOK, CodeMapFail: runtimeStats.CodeMapFail,
 		CodeMapFast: runtimeStats.CodeMapFast, CodeMapSmart: runtimeStats.CodeMapSmart,
+		CommitOK: runtimeStats.CommitOK, CommitFail: runtimeStats.CommitFail,
 		FeatureModel: runtimeStats.FeatureModel, CachedTokens: runtimeStats.CachedTokens,
 		CacheWriteTokens: runtimeStats.CacheWriteTokens,
 		ModelCounts:      map[string]int64{},
@@ -237,6 +244,8 @@ func metricsSnapshot() map[string]any {
 		"codemap_fail":       runtimeStats.CodeMapFail,
 		"codemap_fast":       runtimeStats.CodeMapFast,
 		"codemap_smart":      runtimeStats.CodeMapSmart,
+		"commit_ok":          runtimeStats.CommitOK,
+		"commit_fail":        runtimeStats.CommitFail,
 		"feature_model_rank": featureRank,
 		"logs":               logs,
 	}
@@ -358,6 +367,8 @@ func metricsFeatureOK(kind, model, mode string) {
 		} else {
 			runtimeStats.CodeMapSmart++
 		}
+	case "commit", "command":
+		runtimeStats.CommitOK++
 	}
 	if model != "" {
 		runtimeStats.FeatureModel[kind+":"+model]++
@@ -373,6 +384,8 @@ func metricsFeatureFail(kind, model string) {
 		runtimeStats.DeepWikiFail++
 	case "codemap":
 		runtimeStats.CodeMapFail++
+	case "commit", "command":
+		runtimeStats.CommitFail++
 	}
 	if model != "" && runtimeStats.FeatureModel != nil {
 		runtimeStats.FeatureModel[kind+":fail:"+model]++

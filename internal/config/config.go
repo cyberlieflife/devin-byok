@@ -119,6 +119,8 @@ type FeaturesConfig struct {
 	CodeMapModel      string `yaml:"codemap_model"` // 兼容旧键；未分模式时作为 Smart 回退
 	CodeMapFastModel  string `yaml:"codemap_fast_model"`
 	CodeMapSmartModel string `yaml:"codemap_smart_model"`
+	// CommandModel Generate Git Commit Message 等 Command 功能默认/强制模型（models[].id）
+	CommandModel string `yaml:"command_model"`
 }
 
 // UpdateConfig 在线更新（GitHub Releases）。
@@ -213,6 +215,7 @@ type GUIPatch struct {
 	CodeMapModel         *string `json:"codemap_model"`
 	CodeMapFastModel     *string `json:"codemap_fast_model"`
 	CodeMapSmartModel    *string `json:"codemap_smart_model"`
+	CommandModel         *string `json:"command_model"`
 	UpdateEnabled        *bool   `json:"update_enabled"`
 	UpdateAutoApply      *bool   `json:"update_auto_apply"`
 	UpdateRepo           *string `json:"update_repo"`
@@ -249,6 +252,9 @@ func (f *File) ApplyGUIPatch(p GUIPatch) {
 	}
 	if p.DeepWikiModel != nil {
 		f.Features.DeepWikiModel = strings.TrimSpace(*p.DeepWikiModel)
+	}
+	if p.CommandModel != nil {
+		f.Features.CommandModel = strings.TrimSpace(*p.CommandModel)
 	}
 	if p.CodeMapModel != nil {
 		f.Features.CodeMapModel = strings.TrimSpace(*p.CodeMapModel)
@@ -835,6 +841,8 @@ func (f *File) FeatureModelID(kind string) string {
 	k := strings.ToLower(strings.TrimSpace(kind))
 	candidates := []string{}
 	switch k {
+	case "command", "commit", "commit_message", "git_commit":
+		candidates = append(candidates, f.Features.CommandModel)
 	case "deepwiki", "wiki":
 		candidates = append(candidates, f.Features.DeepWikiModel)
 	case "codemap_fast", "fast":

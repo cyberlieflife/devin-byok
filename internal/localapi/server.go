@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -303,6 +304,10 @@ func (s *Server) serveRPC(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(method, "GetStatus"):
 		s.writeProtoRPC(w, method, buildGetStatusResponse())
 		return
+	case strings.HasSuffix(method, "RecordCommitMessageGeneration"):
+		markCommitGenerationPending()
+		s.writeProto(w, []byte{})
+		return
 	case strings.Contains(method, "Record"),
 		strings.Contains(method, "Log"):
 		s.writeProto(w, []byte{})
@@ -332,6 +337,26 @@ func (s *Server) serveRPC(w http.ResponseWriter, r *http.Request) {
 func isDeepWikiRPC(method string) bool {
 	m := strings.ToLower(method)
 	return strings.Contains(m, "getdeepwiki")
+}
+
+
+// commitGenPendingUntil 在 RecordCommitMessageGeneration 后短窗口内把聊天计为 Commit 生成。
+var commitGenPendingUntil atomic.Int64
+
+func markCommitGenerationPending() {
+	commitGenPendingUntil.Store(time.Now().Add(2 * time.Minute).UnixNano())
+}
+
+func isCommitGenerationPending() bool {
+	until := commitGenPendingUntil.Load()
+	if until == 0 {
+		return false
+	}
+	return time.Now().UnixNano() <= until
+}
+
+func clearCommitGenerationPending() {
+	commitGenPendingUntil.Store(0)
 }
 
 func isChatRPC(method string) bool {
@@ -404,12 +429,24 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 			uiModel = m2.ID
 		}
 	}
+	// Commit 模型绑定：生成 Commit 消息窗口内强制使用 command_model（若已配置）
+	if cmd := cfg.FeatureModelID("command"); cmd != "" && isCommitGenerationPending() {
+		if m, ok := cfg.ResolveModelUID(cmd); ok {
+			uiModel = m.ID
+		} else {
+			uiModel = cmd
+		}
+	}
 	prov, okProv := cfg.ResolveProvider(uiModel)
 	model := prov.UpstreamModel
 	effort := cfg.ResolveThinking(uiModel)
 	if !okProv || model == "" {
 		msg := "未找到模型供应商配置: " + uiModel + "。请在「模型」页为 Family 配置 base_url / api_key / upstream_model。"
 		metricsReqFail(uiModel)
+		if isCommitGenerationPending() {
+			metricsFeatureFail("commit", uiModel)
+			clearCommitGenerationPending()
+		}
 		metricsAddLog("error", msg)
 		w.Header().Set("Content-Type", "application/connect+proto")
 		w.WriteHeader(http.StatusOK)
@@ -644,6 +681,11 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	if result.err != nil {
 		logx.Errorf("upstream chat: %v", result.err)
 		metricsReqFail(uiModel)
+		if isCommitGenerationPending() {
+			metricsFeatureFail("commit", uiModel)
+			clearCommitGenerationPending()
+			metricsAddLog("error", "commit fail model="+uiModel+" err="+result.err.Error())
+		}
 		metricsAddLog("error", "upstream fail: "+result.err.Error())
 		_ = writeFrame(buildGetChatMessageErrorDelta(msgID, humanizeChatError(result.err)))
 		_, _ = w.Write(pbwire.ConnectEndStream())
@@ -721,6 +763,11 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	}
 	toolN := len(result.toolCalls)
 	metricsReqOK(uiModel, tin, tout, toolN)
+	if isCommitGenerationPending() {
+		metricsFeatureOK("commit", uiModel, "")
+		clearCommitGenerationPending()
+		metricsAddLog("info", fmt.Sprintf("commit ok model=%s out_tokens~%d", uiModel, tout))
+	}
 	metricsAddLog("info", fmt.Sprintf("done model=%s out_tokens~%d tools=%d cacheKey=%v", uiModel, tout, toolN, chatOpt.PromptCacheKey != ""))
 	logx.Infof("chat-like done text=%d thinkingText=%d effort=%s stream=%v model=%s", len(text), len(thinking), effort, cfg.Features.EnableStream, model)
 }
