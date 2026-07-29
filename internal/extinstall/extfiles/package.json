@@ -1,0 +1,53 @@
+{
+  "name": "prompt-editor",
+  "displayName": "Devin BYOK Prompt",
+  "description": "Edit BYOK system prompts in Devin (sync with local-api)",
+  "version": "1.0.0",
+  "publisher": "devin-byok",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["AI", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "devin-byok-prompt",
+          "title": "BYOK Prompts",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "devin-byok-prompt": [
+        {
+          "id": "devinByok.prompts",
+          "name": "System Prompts",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "devinByok.prompts.refresh",
+        "title": "BYOK: Refresh prompts",
+        "category": "Devin BYOK"
+      },
+      {
+        "command": "devinByok.prompts.openGui",
+        "title": "BYOK: Open GUI",
+        "category": "Devin BYOK"
+      }
+    ],
+    "configuration": {
+      "title": "Devin BYOK Prompt",
+      "properties": {
+        "devinByok.portalUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8787",
+          "description": "devin-byok local-api base URL"
+        }
+      }
+    }
+  }
+}

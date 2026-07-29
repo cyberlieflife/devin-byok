@@ -73,15 +73,63 @@ func TestLocalModelStubsContainUpstreamModel(t *testing.T) {
 		t.Fatalf("jwt payload missing pro:true: %s", payload)
 	}
 
+	// 仅单机：任何模式都不透传官方
 	s := testServer(false)
 	if s.shouldProxyOfficial("exa.auth_pb.AuthService/GetUserJwt") {
-		t.Fatal("GetUserJwt should not proxy official")
+		t.Fatal("single-node mode must not proxy GetUserJwt")
+	}
+	if s.shouldProxyOfficial("exa.seat_management_pb.SeatManagementService/GetUserStatus") {
+		t.Fatal("GetUserStatus must stay local")
 	}
 	s2 := testServer(true)
+	if s2.shouldProxyOfficial("exa.auth_pb.AuthService/GetUserJwt") {
+		t.Fatal("pure_local GetUserJwt must not proxy")
+	}
 	if s2.shouldProxyOfficial("exa.cascade_plugins_pb.CascadePluginsService/GetAllAcpRegistries") {
 		t.Fatal("pure_local should not proxy anything")
 	}
 }
+
+func TestPureLocalNeverProxyChat(t *testing.T) {
+	for _, pure := range []bool{true, false} {
+		s := testServer(pure)
+		body := []byte("tool find_code_context Instant Context agent MODEL_CHAT_GPT_4_1_MINI")
+		if s.shouldProxyChatOfficial("exa.api_server_pb.ApiServerService/GetChatMessage", body) {
+			t.Fatalf("pure=%v must never proxy chat (single-node only)", pure)
+		}
+		if s.shouldProxyOfficial("exa.auth_pb.AuthService/GetUserJwt") {
+			t.Fatalf("pure=%v must never proxy auth", pure)
+		}
+	}
+}
+
+func TestFastContextDetection(t *testing.T) {
+	plain := []byte("find_code_context Instant Context agent search")
+	parsed := parseGetChatMessageRequest(plain)
+	if !isFastContextChat(parsed, "find code context for architecture", plain) {
+		t.Fatal("expected fast context detection")
+	}
+	if !looksLikeOfficialModelEnum([]byte("MODEL_CHAT_GPT_4_1_MINI_2025_04_14")) {
+		t.Fatal("expected official model enum detection")
+	}
+}
+
+func TestTeamConfigDisablesFastContextFalse(t *testing.T) {
+	cfg := &config.File{}
+	tc := buildTeamConfig(cfg)
+	// field 33 bool false still encodes; at least message non-empty and contains team id
+	if !bytes.Contains(tc, []byte("byok-local-team")) {
+		t.Fatalf("team config missing team id: %v", tc)
+	}
+	us := buildGetUserStatusResponse(cfg)
+	if !bytes.Contains(us, []byte("byok-local-team")) {
+		t.Fatal("GetUserStatus should embed team_config")
+	}
+	if !bytes.Contains(us, []byte("Devin BYOK Pro")) {
+		t.Fatal("GetUserStatus should spoof Pro plan name")
+	}
+}
+
 
 func TestDuplicateModelIDsNormalized(t *testing.T) {
 	// 模拟用户写了两个相同 id

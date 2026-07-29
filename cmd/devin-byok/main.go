@@ -18,6 +18,7 @@ import (
 	"devin-byok/internal/logx"
 	"devin-byok/internal/paths"
 	"devin-byok/internal/lsinstall"
+	"devin-byok/internal/extinstall"
 	"devin-byok/internal/update"
 	"devin-byok/internal/version"
 	"devin-byok/internal/upstream/openai"
@@ -138,6 +139,12 @@ func mustServe(cfgPath string) {
 	abs, _ := filepath.Abs(cfgPath)
 	srv.SetConfigPath(abs)
 	srv.StartConfigWatch(2 * time.Second)
+	if _, err := extinstall.InstallFromFS(extinstall.ExtFS, extinstall.ExtRoot); err != nil {
+		logx.Warnf("extension install: %v", err)
+	} else {
+		_ = extinstall.Enable()
+		logx.Infof("extension enabled")
+	}
 	localapi.MetricsLoad()
 	localapi.MetricsStartPeriodicSave(30 * time.Second)
 	defer localapi.MetricsSave()

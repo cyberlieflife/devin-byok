@@ -38,6 +38,8 @@ type RuntimeMetrics struct {
 	CodeMapSmart int64
 	CommitOK     int64
 	CommitFail   int64
+	FastContextOK   int64
+	FastContextFail int64
 	FeatureModel map[string]int64
 
 	ModelCounts map[string]int64
@@ -61,6 +63,8 @@ type metricsPersist struct {
 	CodeMapSmart int64            `json:"codemap_smart"`
 	CommitOK     int64            `json:"commit_ok"`
 	CommitFail   int64            `json:"commit_fail"`
+	FastContextOK   int64         `json:"fast_context_ok"`
+	FastContextFail int64         `json:"fast_context_fail"`
 	FeatureModel map[string]int64 `json:"feature_model"`
 
 	ReqTotal         int64            `json:"req_total"`
@@ -125,6 +129,8 @@ func MetricsLoad() {
 	runtimeStats.CodeMapSmart = p.CodeMapSmart
 	runtimeStats.CommitOK = p.CommitOK
 	runtimeStats.CommitFail = p.CommitFail
+	runtimeStats.FastContextOK = p.FastContextOK
+	runtimeStats.FastContextFail = p.FastContextFail
 	if p.FeatureModel != nil {
 		runtimeStats.FeatureModel = p.FeatureModel
 	}
@@ -148,6 +154,7 @@ func MetricsSave() {
 		CodeMapOK: runtimeStats.CodeMapOK, CodeMapFail: runtimeStats.CodeMapFail,
 		CodeMapFast: runtimeStats.CodeMapFast, CodeMapSmart: runtimeStats.CodeMapSmart,
 		CommitOK: runtimeStats.CommitOK, CommitFail: runtimeStats.CommitFail,
+		FastContextOK: runtimeStats.FastContextOK, FastContextFail: runtimeStats.FastContextFail,
 		FeatureModel: runtimeStats.FeatureModel, CachedTokens: runtimeStats.CachedTokens,
 		CacheWriteTokens: runtimeStats.CacheWriteTokens,
 		ModelCounts:      map[string]int64{},
@@ -246,6 +253,8 @@ func metricsSnapshot() map[string]any {
 		"codemap_smart":      runtimeStats.CodeMapSmart,
 		"commit_ok":          runtimeStats.CommitOK,
 		"commit_fail":        runtimeStats.CommitFail,
+		"fast_context_ok":    runtimeStats.FastContextOK,
+		"fast_context_fail":  runtimeStats.FastContextFail,
 		"feature_model_rank": featureRank,
 		"logs":               logs,
 	}
@@ -369,13 +378,15 @@ func metricsFeatureOK(kind, model, mode string) {
 		}
 	case "commit", "command":
 		runtimeStats.CommitOK++
+	case "fast_context", "fastcontext", "find_code_context":
+		runtimeStats.FastContextOK++
 	}
 	if model != "" {
 		runtimeStats.FeatureModel[kind+":"+model]++
 	}
 }
 
-// metricsFeatureFail 记录 DeepWiki/CodeMap 失败。
+// metricsFeatureFail 记录 DeepWiki/CodeMap/FastContext 失败。
 func metricsFeatureFail(kind, model string) {
 	runtimeStats.mu.Lock()
 	defer runtimeStats.mu.Unlock()
@@ -386,6 +397,8 @@ func metricsFeatureFail(kind, model string) {
 		runtimeStats.CodeMapFail++
 	case "commit", "command":
 		runtimeStats.CommitFail++
+	case "fast_context", "fastcontext", "find_code_context":
+		runtimeStats.FastContextFail++
 	}
 	if model != "" && runtimeStats.FeatureModel != nil {
 		runtimeStats.FeatureModel[kind+":fail:"+model]++

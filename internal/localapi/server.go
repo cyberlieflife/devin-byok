@@ -21,6 +21,7 @@ import (
 	"devin-byok/internal/logx"
 	"devin-byok/internal/pbwire"
 	"devin-byok/internal/upstream/openai"
+	"devin-byok/internal/promptstore"
 )
 
 // Server 本地 Codeium API 兼容层。
@@ -304,12 +305,24 @@ func (s *Server) serveRPC(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(method, "GetStatus"):
 		s.writeProtoRPC(w, method, buildGetStatusResponse())
 		return
+	case strings.HasSuffix(method, "GetUnleashData"):
+		s.writeProtoRPC(w, method, buildGetUnleashDataResponse())
+		return
+	case strings.HasSuffix(method, "ShouldEnableUnleash"):
+		s.writeProtoRPC(w, method, buildShouldEnableUnleashResponse())
+		return
 	case strings.HasSuffix(method, "RecordCommitMessageGeneration"):
 		markCommitGenerationPending()
 		s.writeProto(w, []byte{})
 		return
 	case strings.Contains(method, "Record"),
 		strings.Contains(method, "Log"):
+		// 轨迹步骤含 FIND_CODE_CONTEXT 时，开启 Fast Context 模型绑定窗口
+		blob := string(body)
+		if strings.Contains(blob, "FIND_CODE_CONTEXT") || strings.Contains(strings.ToLower(blob), "find_code_context") {
+			markFastContextPending()
+			metricsAddLog("info", "fast-context pending from "+method)
+		}
 		s.writeProto(w, []byte{})
 		return
 	}
@@ -325,7 +338,12 @@ func (s *Server) serveRPC(w http.ResponseWriter, r *http.Request) {
 	}
 
 // ---- P1 chat-ish streaming / unary ----
+	if isDevstralRPC(method) {
+		s.handleGetDevstralStream(w, r, method, body, raw)
+		return
+	}
 	if isChatRPC(method) {
+		// 仅单机：Cascade 主对话走本地 BYOK
 		s.handleChatLike(w, r, method, body, raw)
 		return
 	}
@@ -359,11 +377,75 @@ func clearCommitGenerationPending() {
 	commitGenPendingUntil.Store(0)
 }
 
+// fastContextPendingUntil：find_code_context 工具调用后，短窗口内的聊天视为 Fast Context 子代理。
+var fastContextPendingUntil atomic.Int64
+
+func markFastContextPending() {
+	fastContextPendingUntil.Store(time.Now().Add(3 * time.Minute).UnixNano())
+}
+
+func isFastContextPending() bool {
+	until := fastContextPendingUntil.Load()
+	if until == 0 {
+		return false
+	}
+	return time.Now().UnixNano() <= until
+}
+
+func clearFastContextPending() {
+	fastContextPendingUntil.Store(0)
+}
+
+// isFastContextChat 识别 Fast Context / Instant Context / find_code_context 相关请求。
+func isFastContextChat(parsed parsedChatRequest, userText string, plain []byte) bool {
+	if isFastContextPending() {
+		return true
+	}
+	for _, t := range parsed.Tools {
+		n := strings.ToLower(strings.TrimSpace(t.Function.Name))
+		if n == "" {
+			continue
+		}
+		if strings.Contains(n, "find_code_context") || n == "fast_context" || n == "instant_context" {
+			return true
+		}
+	}
+	blob := strings.ToLower(parsed.SystemPrompt + "\n" + userText)
+	keys := []string{
+		"fast context", "find code context", "find_code_context",
+		"instant context", "instantcontext", "code context agent",
+		"cortex_step_type_find_code_context",
+	}
+	for _, k := range keys {
+		if strings.Contains(blob, k) {
+			return true
+		}
+	}
+	// proto 原始字节中的枚举/工具名
+	low := strings.ToLower(string(plain))
+	for _, k := range []string{"find_code_context", "findcodecontext", "fast_context", "instantcontext", "cortex_step_type_find_code_context"} {
+		if strings.Contains(low, k) {
+			return true
+		}
+	}
+	return false
+}
+
+func toolCallsIncludeFastContext(calls []openai.ToolCall) bool {
+	for _, c := range calls {
+		n := strings.ToLower(c.Function.Name)
+		if strings.Contains(n, "find_code_context") || n == "fast_context" || n == "instant_context" {
+			return true
+		}
+	}
+	return false
+}
+
 func isChatRPC(method string) bool {
 	m := strings.ToLower(method)
 	keys := []string{
 		"getchatmessage", "rawgetchatmessage", "getchatcompletions",
-		"getstreaming", "externalchat", "modelapitext", "getdevstralstream",
+		"getstreaming", "externalchat", "modelapitext",
 	}
 	for _, k := range keys {
 		if strings.Contains(m, k) {
@@ -398,7 +480,7 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		msgID = fmt.Sprintf("byok-%d", time.Now().UnixNano())
 	}
 	msgs := buildOpenAIMessages(parsed)
-	// ????????user ? tool ???????????????????
+	// …user ? tool …
 	if len(msgs) == 0 {
 		msgs = append(msgs, openai.ChatMessage{Role: "user", Content: userText})
 	} else {
@@ -437,6 +519,23 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 			uiModel = cmd
 		}
 	}
+	// Fast Context（纯本地）：FC 标记或官方 mini 枚举 → 强制 fast_context_model
+	fastCtx := isFastContextChat(parsed, userText, plain) || looksLikeOfficialModelEnum(plain)
+	if fastCtx {
+		if fc := cfg.FeatureModelID("fast_context"); fc != "" {
+			if m, ok := cfg.ResolveModelUID(fc); ok {
+				uiModel = m.ID
+			} else if m, ok := cfg.FindModel(fc); ok {
+				uiModel = m.ID
+			} else {
+				uiModel = fc
+			}
+		} else {
+			uiModel = cfg.DefaultModelID()
+		}
+		metricsAddLog("info", "fast-context local model="+uiModel)
+		logx.Infof("fast-context pure-local model=%s", uiModel)
+	}
 	prov, okProv := cfg.ResolveProvider(uiModel)
 	model := prov.UpstreamModel
 	effort := cfg.ResolveThinking(uiModel)
@@ -446,6 +545,10 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		if isCommitGenerationPending() {
 			metricsFeatureFail("commit", uiModel)
 			clearCommitGenerationPending()
+		}
+		if fastCtx {
+			metricsFeatureFail("fast_context", uiModel)
+			clearFastContextPending()
 		}
 		metricsAddLog("error", msg)
 		w.Header().Set("Content-Type", "application/connect+proto")
@@ -464,7 +567,7 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		}()
 		return
 	}
-	// ???????/family ???????? sampling
+	// …/family … sampling
 	maxTok := cfg.Upstream.Sampling.MaxTokens
 	if me, ok := cfg.FindModel(uiModel); ok && me.MaxTokens > 0 {
 		maxTok = me.MaxTokens
@@ -478,12 +581,15 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		BaseURL:       prov.BaseURL,
 		APIKey:        prov.APIKey,
 	}
-	// Cascade ???? tools.mode ??????? function calling
+	// Cascade … tools.mode … function calling
 	toolsMode := cfg.ToolsMode()
 	filteredTools, toolsMode := filterToolsByPolicy(parsed.Tools, cfg)
 	if cfg.Features.EnableCascadeTools && len(filteredTools) > 0 {
 		chatOpt.Tools = filteredTools
 	}
+	// 工具场景使用 tools.timeout_sec（否则 upstream.timeout_sec），并下发到 HTTP client
+	chatTimeoutSec := cfg.ResolveChatTimeoutSec(len(chatOpt.Tools) > 0)
+	chatOpt.HTTPTimeout = time.Duration(chatTimeoutSec) * time.Second
 	// cursor-byok 同款：按会话绑定 prompt_cache_key，提升上游 prompt 缓存命中
 	if cfg.PromptCacheEnabled() {
 		key := strings.TrimSpace(cfg.Cache.PromptCacheKey)
@@ -496,14 +602,19 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		}
 		chatOpt.PromptCacheKey = key
 	}
-	// ??????
+	// …
 	if cfg.ToolsWorkspaceHint() && needsWorkspaceHint(plain, userText, msgs) {
 		msgs = injectWorkspaceHint(msgs)
 	}
-	// ???????????
+	// …
 	if len(chatOpt.Tools) > 0 {
 		msgs = injectCascadeToolsHint(msgs)
 	}
+	if fastCtx {
+		msgs = injectFastContextAgentHint(msgs)
+	}
+	// 系统提示词（含固定 write/edit 提示）始终注入
+	msgs = promptstore.ApplyToMessages(msgs)
 	workspaceRoots := extractWorkspaceRoots(plain)
 	logx.Infof("chat-like %s userText=%q msg=%s uiModel=%s upstreamModel=%s provider=%s base=%s thinking=%s stream=%v sysPrompt=%d toolsIn=%d toolsOut=%d mode=%s hist=%d plain=%d cascadeTools=%v workspace=%v",
 		method, truncate(userText, 80), msgID, uiModel, model, prov.Provider, truncate(prov.BaseURL, 60), effort, cfg.Features.EnableStream, len(parsed.SystemPrompt), len(parsed.Tools), len(filteredTools), toolsMode, len(parsed.Messages), len(plain), cfg.Features.EnableCascadeTools, workspaceRoots)
@@ -549,7 +660,11 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		}
 	}
 
-	timeoutSec := cfg.ResolveChatTimeoutSec(len(chatOpt.Tools) > 0)
+	timeoutSec := int(chatOpt.HTTPTimeout / time.Second)
+	if timeoutSec <= 0 {
+		timeoutSec = cfg.ResolveChatTimeoutSec(len(chatOpt.Tools) > 0)
+		chatOpt.HTTPTimeout = time.Duration(timeoutSec) * time.Second
+	}
 	timeout := time.Duration(timeoutSec) * time.Second
 	upCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -561,7 +676,7 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
 
-	// ?? goroutine ? keepAlive ????????????
+	// … goroutine ? keepAlive …
 	var writeMu sync.Mutex
 	writeFrame := func(payload []byte) bool {
 		writeMu.Lock()
@@ -626,7 +741,8 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 						return context.Canceled
 					}
 				}
-				// ??????????????? Devin ? incomplete ????? JSON ??/invalid tool call?
+				// 只合并上游 tool delta，不在生成中途向 Devin 推工具参数。
+				// 中途推累计/分片 JSON 会导致客户端追加错乱或过早执行，出现 TargetFile 丢失与截停。
 				if len(d.ToolCalls) > 0 && cfg.Features.EnableCascadeTools {
 					tools = openai.MergeToolCallDeltas(tools, d.ToolCalls)
 				}
@@ -647,8 +763,13 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		}()
 	}
 
-	ticker := time.NewTicker(700 * time.Millisecond)
+	keepEvery := 700 * time.Millisecond
+	if len(chatOpt.Tools) > 0 {
+		keepEvery = 300 * time.Millisecond // 工具场景更勤保活，降低 Devin 端超时
+	}
+	ticker := time.NewTicker(keepEvery)
 	defer ticker.Stop()
+	keepCount := 0
 	var result chatResult
 	waiting := true
 	for waiting {
@@ -656,7 +777,14 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		case result = <-done:
 			waiting = false
 		case <-ticker.C:
-			if !keepAlive() {
+			keepCount++
+			// 工具等待时定期发 incomplete 心跳（假流式保活）
+			ok := keepAlive()
+			if ok && len(chatOpt.Tools) > 0 && keepCount%4 == 0 {
+				// 轻量 thinking 心跳，避免客户端以为连接僵死
+				ok = writeDelta("", "​", true)
+			}
+			if !ok {
 				logx.Warnf("chat-like client disconnected during wait")
 				cancel()
 				return
@@ -686,6 +814,11 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 			clearCommitGenerationPending()
 			metricsAddLog("error", "commit fail model="+uiModel+" err="+result.err.Error())
 		}
+		if fastCtx {
+			metricsFeatureFail("fast_context", uiModel)
+			clearFastContextPending()
+			metricsAddLog("error", "fast-context fail model="+uiModel+" err="+result.err.Error())
+		}
 		metricsAddLog("error", "upstream fail: "+result.err.Error())
 		_ = writeFrame(buildGetChatMessageErrorDelta(msgID, humanizeChatError(result.err)))
 		_, _ = w.Write(pbwire.ConnectEndStream())
@@ -712,7 +845,7 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 			}
 			views := toolCallViews(valid)
 			if len(views) > 0 {
-				_ = writeFrame(buildGetChatMessageToolFinal(msgID, views))
+				emitToolCallsSmart(writeFrame, writeDelta, msgID, views)
 				logx.Infof("chat-like tool_calls=%d names=%v", len(views), toolNames(views))
 			} else if warn != "" {
 				_ = writeFrame(buildGetChatMessageErrorDelta(msgID, warn))
@@ -723,7 +856,7 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 			_ = writeDelta(text, thinking, false)
 		}
 	} else {
-		// ?????/?????????????????? FUNCTION_CALL
+		// …/… FUNCTION_CALL
 		if len(result.toolCalls) > 0 && cfg.Features.EnableCascadeTools {
 			valid, warn := validateToolCallsEx(result.toolCalls, workspaceRoots)
 			if warn != "" {
@@ -731,7 +864,7 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 			}
 			views := toolCallViews(valid)
 			if len(views) > 0 {
-				_ = writeFrame(buildGetChatMessageToolFinal(msgID, views))
+				emitToolCallsSmart(writeFrame, writeDelta, msgID, views)
 				logx.Infof("chat-like stream tool_calls=%d names=%v", len(views), toolNames(views))
 			} else if warn != "" {
 				_ = writeFrame(buildGetChatMessageErrorDelta(msgID, warn))
@@ -768,6 +901,16 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		clearCommitGenerationPending()
 		metricsAddLog("info", fmt.Sprintf("commit ok model=%s out_tokens~%d", uiModel, tout))
 	}
+	if fastCtx {
+		metricsFeatureOK("fast_context", uiModel, "")
+		clearFastContextPending()
+		metricsAddLog("info", fmt.Sprintf("fast-context ok model=%s out_tokens~%d", uiModel, tout))
+	}
+	// 主 Cascade 若发起 find_code_context 工具，后续窗口内聊天按 Fast Context 计
+	if toolCallsIncludeFastContext(result.toolCalls) {
+		markFastContextPending()
+		metricsAddLog("info", "fast-context pending after tool_calls")
+	}
 	metricsAddLog("info", fmt.Sprintf("done model=%s out_tokens~%d tools=%d cacheKey=%v", uiModel, tout, toolN, chatOpt.PromptCacheKey != ""))
 	logx.Infof("chat-like done text=%d thinkingText=%d effort=%s stream=%v model=%s", len(text), len(thinking), effort, cfg.Features.EnableStream, model)
 }
@@ -775,6 +918,72 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 
 
 
+
+
+// isWriteEditCascadeTool 新建/写入/编辑类工具。
+func isWriteEditCascadeTool(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	keys := []string{
+		"write_to_file", "write_file", "edit_file", "edit_",
+		"replace", "search_replace", "create_file", "apply_patch",
+		"modify_file", "append_file",
+	}
+	for _, k := range keys {
+		if strings.Contains(n, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// isHeavyCascadeTool 命令/写入/编辑等重工具：结束时用 incomplete 心跳保活，再一次下发完整 FUNCTION_CALL。
+func isHeavyCascadeTool(name string) bool {
+	if isWriteEditCascadeTool(name) {
+		return true
+	}
+	n := strings.ToLower(strings.TrimSpace(name))
+	keys := []string{"run_command", "command", "delete_file"}
+	for _, k := range keys {
+		if strings.Contains(n, k) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasHeavyCascadeTools(views []openaiToolCallView) bool {
+	for _, v := range views {
+		if isHeavyCascadeTool(v.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// emitToolCallsSmart 仅在参数已完整校验后调用。
+// 禁止分片/累计中间帧：Devin 会对 delta_tool_calls 的 arguments 做追加或过早执行，导致 TargetFile 丢失与截停。
+// 策略：轻量 incomplete 保活 →（可选）一帧完整 incomplete tool delta → FUNCTION_CALL 终帧。
+func emitToolCallsSmart(writeFrame func([]byte) bool, writeDelta func(text, thinking string, inProgress bool) bool, msgID string, views []openaiToolCallView) {
+	if len(views) == 0 {
+		return
+	}
+	if hasHeavyCascadeTools(views) {
+		metricsAddLog("info", "tool-final complete names="+strings.Join(toolNames(views), ","))
+		for i := 0; i < 3; i++ {
+			_ = writeFrame(buildGetChatMessageDelta(msgID, "", "", true))
+			time.Sleep(40 * time.Millisecond)
+		}
+		// 完整合法 JSON 的 incomplete 预览帧（非分片），再 final
+		_ = writeFrame(buildGetChatMessageToolDelta(msgID, views))
+		time.Sleep(40 * time.Millisecond)
+	}
+	_ = writeFrame(buildGetChatMessageToolFinal(msgID, views))
+}
+
+// emitToolCallsWithFakeStream 兼容旧调用名。
+func emitToolCallsWithFakeStream(writeFrame func([]byte) bool, writeDelta func(text, thinking string, inProgress bool) bool, msgID string, views []openaiToolCallView) {
+	emitToolCallsSmart(writeFrame, writeDelta, msgID, views)
+}
 
 func toolNames(views []openaiToolCallView) []string {
 	out := make([]string, 0, len(views))
@@ -913,6 +1122,31 @@ func (s *Server) writeProto(w http.ResponseWriter, payload []byte) {
 func (s *Server) writeProtoRPC(w http.ResponseWriter, method string, payload []byte) {
 	logx.Infof("local stub %s bytes=%d", method, len(payload))
 	s.writeProto(w, payload)
+}
+
+
+// writeChatProxyError 混合模式官方聊天失败时，返回可被 Cascade 显示的错误 delta，避免空响应变 Internal error。
+func (s *Server) writeChatProxyError(w http.ResponseWriter, method string, body, raw []byte, msg string) {
+	plain := body
+	if len(plain) == 0 {
+		if p := decodeConnectPayloads(raw); len(p) > 0 {
+			plain = p
+		}
+	}
+	msgID := pickMessageID(plain)
+	if msgID == "" {
+		msgID = "byok-official-proxy-error"
+	}
+	w.Header().Set("Content-Type", "application/connect+proto")
+	w.Header().Set("Connect-Protocol-Version", "1")
+	w.WriteHeader(http.StatusOK)
+	payload := buildGetChatMessageErrorDelta(msgID, msg)
+	_, _ = w.Write(pbwire.ConnectFrame(0, payload))
+	_, _ = w.Write(pbwire.ConnectEndStream())
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	logx.Warnf("wrote chat proxy error method=%s msg=%s", method, msg)
 }
 
 func (s *Server) writeConnectError(w http.ResponseWriter, msg string) {
@@ -1117,31 +1351,27 @@ func jsonString(s string) string {
 }
 
 
+// shouldProxyOfficial 混合模式（pure_local=false）策略，对齐 dao 类「登录官方 + 能力分流」：
+//   - 官方：GetUserJwt / GetProfileData（真实账号 session）、以及未列入本地的 RPC
+//   - 本地：GetUserStatus（伪装 Pro）、模型列表、容量/限流 stub、Ping 等
+//   - 聊天默认本地；Fast Context 在 serveRPC 里单独透传官方
+// pure_local=true 时全部不透传。
 func (s *Server) shouldProxyOfficial(method string) bool {
-	if s.GetConfig().Features.PureLocal {
-		return false
-	}
-	if isChatRPC(method) {
-		return false
-	}
-	if strings.Contains(method, "Record") || strings.Contains(method, "Log") || strings.Contains(method, "Analytics") {
-		return false
-	}
-	localOnly := []string{
-		"GetUserStatus", "GetUserJwt", "GetProfileData",
-		"GetCommandModelConfigs", "GetCommandModelConfigsForSite",
-		"GetCascadeModelConfigs", "GetCascadeModelConfigsForSite",
-		"GetCliModelConfigs", "GetCliModelConfigsForSite",
-		"GetModelStatuses", "CheckChatCapacity", "CheckUserMessageRateLimit",
-		"GetStatus", "GetDefaultWorkflowTemplates", "Ping", "GetAllAcpRegistries",
-	}
-	for _, name := range localOnly {
-		if strings.HasSuffix(method, name) {
-			return false
-		}
-	}
-	return true
+	// 仅单机：全部 RPC 本地处理，不透传 server.codeium.com
+	_ = s
+	_ = method
+	return false
 }
+
+
+// shouldProxyChatOfficial 混合模式聊天分流（保守，避免把主 Cascade 误送官方导致 Internal error）：
+//  默认本地 BYOK；仅在明确 Fast Context 或明确官方模型枚举时透传官方。
+func (s *Server) shouldProxyChatOfficial(method string, plain []byte) bool {
+	// 仅单机：聊天（含 Fast Context）全部本地，永不透传官方
+	_, _, _ = s, method, plain
+	return false
+}
+
 
 func (s *Server) proxyOfficial(w http.ResponseWriter, r *http.Request, raw []byte) error {
 	// 映射到官方路径：去掉 /_route/api_server 前缀
@@ -1165,11 +1395,18 @@ func (s *Server) proxyOfficial(w http.ResponseWriter, r *http.Request, raw []byt
 	if req.Header.Get("Connect-Protocol-Version") == "" {
 		req.Header.Set("Connect-Protocol-Version", "1")
 	}
-	// 从 body 中的 session token 注入 X-Api-Key（Connect 元数据常在 proto 内）
+	// 从 body / 缓存官方身份 注入鉴权，保证 Fast Context 官方调用带真账号
 	if req.Header.Get("Authorization") == "" && req.Header.Get("X-Api-Key") == "" {
 		if tok := extractSessionToken(raw); tok != "" {
 			req.Header.Set("Authorization", "Bearer "+tok)
 			req.Header.Set("X-Api-Key", tok)
+		} else if oid := getOfficialIdentity(); oid.APIKey != "" {
+			req.Header.Set("Authorization", "Bearer "+oid.APIKey)
+			req.Header.Set("X-Api-Key", oid.APIKey)
+			logx.Infof("proxy official using cached api_key for %s", rel)
+		} else if oid := getOfficialIdentity(); oid.RawJWT != "" {
+			req.Header.Set("Authorization", "Bearer "+oid.RawJWT)
+			logx.Infof("proxy official using cached JWT for %s", rel)
 		}
 	}
 	client := &http.Client{Timeout: 45 * time.Second}
@@ -1185,6 +1422,10 @@ func (s *Server) proxyOfficial(w http.ResponseWriter, r *http.Request, raw []byt
 	logx.Infof("proxy official %s -> %d (%d bytes)", rel, resp.StatusCode, len(body))
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode >= 500 {
 		return fmt.Errorf("official status %d", resp.StatusCode)
+	}
+	// 混合登录：缓存官方 JWT 身份，供 GetUserStatus 展示真名而非 byok-local
+	if strings.HasSuffix(methodName(rel), "GetUserJwt") || strings.HasSuffix(methodName(r.URL.Path), "GetUserJwt") {
+		rememberOfficialJWTFromProxyBody(body)
 	}
 	for k, vv := range resp.Header {
 		lk := strings.ToLower(k)

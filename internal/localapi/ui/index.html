@@ -21,6 +21,7 @@
       <button class="btn btn-secondary" id="btnSettings" onclick="showPage('settings')">设置</button>
       <button class="btn btn-primary" onclick="showPage('monitor')">监控</button>
       <button class="btn btn-secondary" onclick="showPage('models')">模型</button>
+      <button class="btn btn-secondary" onclick="showPage('prompts')">提示词</button>
     </div>
   </header>
 
@@ -75,6 +76,8 @@
           <div><div class="label">CodeMap Smart</div><div class="value" id="mCodeMapSmart">0</div></div>
           <div><div class="label">Commit 成功</div><div class="value ok" id="mCommit">0</div></div>
           <div><div class="label">Commit 失败</div><div class="value bad" id="mCommitFail">0</div></div>
+          <div><div class="label">Fast Context 成功</div><div class="value ok" id="mFastContext">0</div></div>
+          <div><div class="label">Fast Context 失败</div><div class="value bad" id="mFastContextFail">0</div></div>
         </div>
       </div>
       <div class="card">
@@ -108,7 +111,7 @@
     </section>
     <div class="card feature-model-card">
       <div class="card-h">功能模型绑定</div>
-      <p class="muted small">DeepWiki、CodeMap、Commit 消息各自绑定下方已有模型变体；保存后热重载。若此处不可见请重启 GUI/服务。</p>
+      <p class="muted small">DeepWiki、CodeMap、Commit、Fast Context 各自绑定下方已有模型变体；保存后热重载。若此处不可见请重启 GUI/服务。</p>
       <div class="feature-bind-grid" style="grid-template-columns:1fr 1fr;">
         <div class="feature-bind">
           <div class="feature-bind-title">DeepWiki</div>
@@ -142,6 +145,14 @@
           </div>
           <div class="muted small" id="command_hint">生效：-</div>
         </div>
+        <div class="feature-bind">
+          <div class="feature-bind-title">Fast Context</div>
+          <div class="field">
+            <label>find_code_context / Instant Context（本地 fast_context_model）</label>
+            <select id="fast_context_model"></select>
+          </div>
+          <div class="muted small" id="fast_context_hint">生效：-</div>
+        </div>
       </div>
       <div class="row gap" style="margin-top:8px">
         <button class="btn btn-primary" onclick="saveFeatureModels()">保存绑定</button>
@@ -149,6 +160,30 @@
       </div>
     </div>
     <div id="familyCards" class="family-grid"></div>
+  </main>
+
+
+  <!-- PROMPTS -->
+  <main id="page-prompts" class="page">
+    <div class="page-head">
+      <div>
+        <h1>系统提示词</h1>
+        <p class="muted">自定义提示词与侧栏扩展同步；另有固定内置英文工具提示（write/edit 优先）始终注入。服务启动安装扩展，停止时禁用。</p>
+      </div>
+      <div class="row gap">
+        <button class="btn btn-secondary" onclick="refreshPrompts()">刷新</button>
+        <button class="btn btn-primary" onclick="openPromptEditor()">+ 新建</button>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-h">扩展状态</div>
+      <div class="muted small" id="extStatus">检测中…</div>
+      <div class="row gap" style="margin-top:8px">
+        <button class="btn btn-secondary" onclick="extAction('install')">安装/启用扩展</button>
+        <button class="btn btn-secondary" onclick="extAction('disable')">禁用扩展</button>
+      </div>
+    </div>
+    <div id="promptList" class="model-grid"></div>
   </main>
 
   <!-- SETTINGS -->
@@ -177,10 +212,10 @@
             <option value="full">full</option>
           </select>
         </div>
-        <div class="field"><label>tools.timeout_sec</label><input id="tools_timeout_sec" type="number"/></div>
+        <div class="field"><label>tools.timeout_sec（有工具时的聊天总超时，秒；命令/写入假流式保活依赖此值）</label><input id="tools_timeout_sec" type="number"/></div>
         <label class="check"><input type="checkbox" id="enable_stream"/> 流式输出</label>
         <label class="check"><input type="checkbox" id="enable_cascade_tools"/> Cascade 工具</label>
-        <label class="check"><input type="checkbox" id="pure_local"/> 纯本地 pure_local</label>
+        <label class="check"><input type="checkbox" id="pure_local" checked disabled/> 纯本地 pure_local（已强制：仅单机，混合模式已取消）</label>
         <div class="row gap" style="margin-top:12px">
           <button class="btn btn-primary" onclick="saveConfig()">保存策略</button>
         </div>

@@ -18,6 +18,7 @@ import (
 	"devin-byok/internal/localapi"
 	"devin-byok/internal/logx"
 	"devin-byok/internal/lsinstall"
+	"devin-byok/internal/extinstall"
 	"devin-byok/internal/paths"
 
 	"github.com/getlantern/systray"
@@ -321,6 +322,7 @@ func stopService() string {
 			return "ok"
 		}
 	}
+	_ = extinstall.Disable()
 	_, _ = devin.RestorePortal()
 	return "ok"
 }
@@ -369,6 +371,13 @@ func applyFromConfig() {
 		logx.Warnf("apply: %v", err)
 	} else {
 		logx.Infof("apply ok")
+	}
+	// 启动时安装/启用 BYOK 提示词扩展
+	if _, err := extinstall.InstallFromFS(extinstall.ExtFS, extinstall.ExtRoot); err != nil {
+		logx.Warnf("extension install: %v", err)
+	} else {
+		_ = extinstall.Enable()
+		logx.Infof("extension enabled: %s", extinstall.ExtID)
 	}
 }
 

@@ -59,7 +59,7 @@ func TestValidateGrepOutsideWorkspace(t *testing.T) {
 	if len(ok) != 0 {
 		t.Fatalf("should reject outside workspace: %+v", ok)
 	}
-	if !strings.Contains(errText, "???") && !strings.Contains(errText, "workspace") && !strings.Contains(errText, "run_command") {
+	if !strings.Contains(errText, "工作区") && !strings.Contains(errText, "run_command") && !strings.Contains(strings.ToLower(errText), "workspace") {
 		t.Fatalf("want workspace error, got %s", errText)
 	}
 	// inside workspace ok
@@ -95,7 +95,7 @@ func TestNeedsWorkspaceHint(t *testing.T) {
 
 func TestHumanizeWorkspaceSearchError(t *testing.T) {
 	msg := humanizeChatError(errString("error executing cascade step: Search path D:/Devin-byok is not within any current workspace."))
-	if !strings.Contains(msg, "???") {
+	if !strings.Contains(msg, "工作区") && !strings.Contains(msg, "run_command") {
 		t.Fatalf("msg=%s", msg)
 	}
 }

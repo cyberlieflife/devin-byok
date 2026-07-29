@@ -62,6 +62,22 @@ func buildAllowedModelConfig(cfg *config.File) []byte {
 	return b
 }
 
+// buildTeamConfig 官方 TeamConfig：显式关闭 disable_fast_context 等门禁，伪装 Pro 团队。
+func buildTeamConfig(cfg *config.File) []byte {
+	_ = cfg
+	var b []byte
+	b = pbwire.AppendString(b, 1, "byok-local-team") // team_id
+	b = pbwire.AppendBool(b, 5, true)                 // allow_mcp_servers
+	b = pbwire.AppendBool(b, 15, false)               // disable_tool_calls
+	b = pbwire.AppendBool(b, 26, false)               // disable_tool_call_execution_outside_workspace
+	b = pbwire.AppendBool(b, 28, false)               // disable_deepwiki
+	b = pbwire.AppendBool(b, 31, false)               // disable_codemaps
+	b = pbwire.AppendString(b, 32, "all")             // allow_codemap_sharing
+	b = pbwire.AppendBool(b, 33, false)               // disable_fast_context ★
+	b = pbwire.AppendBool(b, 34, false)               // disable_lifeguard
+	return b
+}
+
 func buildPlanInfo(cfg *config.File) []byte {
 	var b []byte
 	// teams_tier = DEVIN_PRO，避免 FREE 额度门禁
@@ -99,6 +115,8 @@ func buildPlanInfo(cfg *config.File) []byte {
 	di = pbwire.AppendBool(di, 3, true) // is_admin
 	di = pbwire.AppendString(di, 8, "BYOK Local")
 	b = pbwire.AppendMessage(b, 33, di)
+	// default_team_config = 24（含 disable_fast_context=false）
+	b = pbwire.AppendMessage(b, 24, buildTeamConfig(cfg))
 	return b
 }
 
@@ -117,7 +135,7 @@ func buildPlanStatus(cfg *config.File) []byte {
 	return b
 }
 
-// modelEntries ?????????????
+// modelEntries …
 func modelEntries(cfg *config.File) []config.ModelEntry {
 	return cfg.ModelList()
 }
@@ -214,7 +232,7 @@ func buildClientModelConfigEntry(cfg *config.File, uid, label string, entry *con
 	}
 	b = pbwire.AppendEnum(b, 13, pricingStaticCredit)
 	b = pbwire.AppendEnum(b, 14, apiProviderOpenAICompatibleExternal)
-	// ClientModelConfig.max_tokens?UI ? contextLimit ????????????
+	// ClientModelConfig.max_tokens?UI ? contextLimit …
 	b = pbwire.AppendInt32(b, 18, int32(ctxWin))
 	b = pbwire.AppendBool(b, 20, false)
 	b = pbwire.AppendEnum(b, 24, 1)
@@ -234,7 +252,7 @@ func buildClientModelConfigEntry(cfg *config.File, uid, label string, entry *con
 	var mi []byte
 	mi = pbwire.AppendEnum(mi, 3, modelTypeChat)
 	// model_info.max_tokens = 上下文窗口
-	mi = pbwire.AppendInt32(mi, 4, int32(ctxWin)) // model_info.max_tokens = ?????
+	mi = pbwire.AppendInt32(mi, 4, int32(ctxWin)) // model_info.max_tokens = 上下文窗口
 	mi = pbwire.AppendString(mi, 5, "CL100K_WITH_SPECIAL")
 	mi = pbwire.AppendMessage(mi, 6, feat)
 	mi = pbwire.AppendEnum(mi, 7, apiProviderOpenAICompatibleExternal)
@@ -245,7 +263,7 @@ func buildClientModelConfigEntry(cfg *config.File, uid, label string, entry *con
 	}
 	mi = pbwire.AppendString(mi, 12, uid)
 	// max_output_tokens
-	mi = pbwire.AppendInt32(mi, 13, int32(maxOut)) // model_info.max_output_tokens = ????
+	mi = pbwire.AppendInt32(mi, 13, int32(maxOut)) // model_info.max_output_tokens = 最大输出
 	mi = pbwire.AppendString(mi, 17, uid)
 	mi = pbwire.AppendString(mi, 20, "strawberry-pancake")
 	mi = pbwire.AppendString(mi, 20, "swe-1p6")
@@ -329,11 +347,25 @@ func buildUserStatus(cfg *config.File) []byte {
 	var b []byte
 	b = pbwire.AppendBool(b, 1, true) // pro
 	b = pbwire.AppendBool(b, 2, true) // disable_telemetry
+	// 混合模式：展示官方登录身份；纯本地用 Fake*
 	name := cfg.Auth.FakeName
+	email := cfg.Auth.FakeEmail
+	userID := "byok-local-user"
+	if !cfg.Features.PureLocal {
+		oid := getOfficialIdentity()
+		if oid.Name != "" {
+			name = oid.Name
+		}
+		if oid.Email != "" {
+			email = oid.Email
+		}
+		if oid.UserID != "" {
+			userID = oid.UserID
+		}
+	}
 	if name == "" {
 		name = "BYOK Local"
 	}
-	email := cfg.Auth.FakeEmail
 	if email == "" {
 		email = "byok@local"
 	}
@@ -342,10 +374,11 @@ func buildUserStatus(cfg *config.File) []byte {
 	b = pbwire.AppendEnum(b, 10, teamsTierDevinPro) // teams_tier
 	b = pbwire.AppendMessage(b, 13, buildPlanStatus(cfg))
 	b = pbwire.AppendBool(b, 31, true) // has_used_windsurf
-	// cascade_model_config_data = 33 — 关键：模型列表
+	// team_config = 32 (disable_fast_context=false)
+	b = pbwire.AppendMessage(b, 32, buildTeamConfig(cfg))
 	b = pbwire.AppendMessage(b, 33, buildCascadeModelConfigData(cfg))
 	b = pbwire.AppendInt64(b, 35, 999999) // max_num_premium_chat_messages
-	b = pbwire.AppendString(b, 36, "byok-local-user")
+	b = pbwire.AppendString(b, 36, userID)
 	return b
 }
 
@@ -595,3 +628,31 @@ func buildGetProfileDataResponse() []byte {
 func buildGetStatusResponse() []byte { return []byte{} }
 func buildGetDefaultWorkflowTemplatesResponse() []byte { return []byte{} }
 func buildGetAllAcpRegistriesResponse() []byte { return []byte{} }
+
+
+// buildGetUnleashDataResponse 强制开启 cascade-find-code-context，使 Fast Context 门控通过。
+func buildGetUnleashDataResponse() []byte {
+	var exp []byte
+	// ExperimentConfig.force_enable_experiment_strings = 4 (repeated string)
+	for _, flag := range []string{
+		"cascade-find-code-context",
+		"cascade-enable-conversation-search",
+		"cascade-tool-calling-section-content",
+	} {
+		exp = pbwire.AppendString(exp, 4, flag)
+	}
+	exp = pbwire.AppendBool(exp, 7, true) // dev_mode
+	var b []byte
+	// context optional
+	var ctx []byte
+	ctx = pbwire.AppendString(ctx, 1, "byok-local-user")
+	b = pbwire.AppendMessage(b, 1, ctx)
+	b = pbwire.AppendMessage(b, 2, exp)
+	return b
+}
+
+func buildShouldEnableUnleashResponse() []byte {
+	var b []byte
+	b = pbwire.AppendBool(b, 1, true) // should_enable
+	return b
+}

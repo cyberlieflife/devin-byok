@@ -27,9 +27,11 @@ function toast(msg){const el=document.getElementById('toast'); el.textContent=ms
 function showPage(name){
   currentPage=name;
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
-  document.getElementById('page-'+name).classList.add('active');
+  const page=document.getElementById('page-'+name);
+  if(page) page.classList.add('active');
   if(name==='models') refreshFamilies();
   if(name==='settings'){ refreshConfig(); refreshDesktopPrefs(); }
+  if(name==='prompts') refreshPrompts();
 }
 function setDot(ok,text){
   const d=document.getElementById('apiDot'); const t=document.getElementById('apiText');
@@ -106,6 +108,8 @@ async function refreshMetrics(){
     const elS=document.getElementById('mCodeMapSmart'); if(elS) elS.textContent=m.codemap_smart??0;
   const elCmt=document.getElementById('mCommit'); if(elCmt) elCmt.textContent=m.commit_ok??0;
   const elCmtF=document.getElementById('mCommitFail'); if(elCmtF) elCmtF.textContent=m.commit_fail??0;
+  const elFC=document.getElementById('mFastContext'); if(elFC) elFC.textContent=m.fast_context_ok??0;
+  const elFCf=document.getElementById('mFastContextFail'); if(elFCf) elFCf.textContent=m.fast_context_fail??0;
     renderFeatureRank(m.feature_model_rank||[]);
     const prompt=m.prompt_tokens||0, cached=m.cached_tokens||0;
     if(prompt>0){ drawPie(cached, Math.max(prompt-cached,0)); document.getElementById('cacheDetail').textContent=`cached ${formatCompact(cached)} / prompt ${formatCompact(prompt)}`; }
@@ -418,6 +422,7 @@ function fillFeatureModelSelects(models, cfg){
     ['codemap_fast_model', (cfg&& (cfg.codemap_fast_model||cfg.codemap_fast_model_resolved||cfg.codemap_model)) || def, 'codemap_fast_hint', (cfg&&cfg.codemap_fast_model_resolved)||def],
     ['codemap_smart_model', (cfg&& (cfg.codemap_smart_model||cfg.codemap_smart_model_resolved||cfg.codemap_model)) || def, 'codemap_smart_hint', (cfg&&cfg.codemap_smart_model_resolved)||def],
     ['command_model', (cfg&& (cfg.command_model||cfg.command_model_resolved)) || def, 'command_hint', (cfg&&cfg.command_model_resolved)||def],
+    ['fast_context_model', (cfg&& (cfg.fast_context_model||cfg.fast_context_model_resolved)) || def, 'fast_context_hint', (cfg&&cfg.fast_context_model_resolved)||def],
   ];
   // 兼容旧页面可能仍有 codemap_model 单选
   if(document.getElementById('codemap_model')){
@@ -436,6 +441,7 @@ async function saveFeatureModels(){
     codemap_fast_model: val('codemap_fast_model'),
     codemap_smart_model: val('codemap_smart_model'),
     command_model: val('command_model'),
+    fast_context_model: val('fast_context_model'),
     // 兼容：旧 codemap_model 同步为 smart
     codemap_model: val('codemap_smart_model') || val('codemap_model'),
   };
@@ -761,6 +767,141 @@ async function checkUpdate(){
 }
 async function applyUpdate(){
   return acceptUpdateAndDownload();
+}
+
+
+
+// ===== 系统提示词 + 扩展管理 =====
+window.__prompts = {};
+
+function escapeHtml(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function refreshPrompts(){
+  const box = document.getElementById('promptList');
+  const st = document.getElementById('extStatus');
+  if(st) st.textContent = '加载中…';
+  try{
+    const j = await jget('/api/prompts');
+    const list = (j && j.prompts) ? j.prompts : [];
+    window.__prompts = {};
+    if(box){
+      if(!list.length){
+        box.innerHTML = '<div class="muted">暂无自定义提示词（固定内置工具提示仍会注入）</div>';
+      }else{
+        box.innerHTML = list.map(p => {
+          window.__prompts[p.id] = p;
+          const en = !!p.enabled;
+          return `<div class="card model-card">
+            <div class="card-h">${escapeHtml(p.title||'(无标题)')}
+ <span class="muted small">${en?'启用':'禁用'} · ${escapeHtml(p.mode||'append')}</span></div>
+            <pre class="muted small" style="white-space:pre-wrap;max-height:120px;overflow:auto">${escapeHtml(p.body||'')}</pre>
+            <div class="row gap">
+              <button class="btn btn-secondary" type="button" data-pid="${escapeHtml(p.id)}" data-act="edit">编辑</button>
+              <button class="btn btn-secondary" type="button" data-pid="${escapeHtml(p.id)}" data-act="toggle">${en?'禁用':'启用'}</button>
+              <button class="btn btn-secondary" type="button" data-pid="${escapeHtml(p.id)}" data-act="del">删除</button>
+            </div>
+          </div>`;
+        }).join('');
+        box.querySelectorAll('button[data-act]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-pid');
+            const act = btn.getAttribute('data-act');
+            if(act==='edit') editPromptById(id);
+            else if(act==='toggle') togglePrompt(id);
+            else if(act==='del') deletePrompt(id);
+          });
+        });
+      }
+    }
+    // 扩展状态（失败不阻断列表）
+    try{
+      const ej = await jget('/api/extension');
+      if(st){
+        const inst = ej && ej.installed;
+        const dis = ej && ej.disabled;
+        let line = (inst ? '已安装' : '未安装') + ' · ' + (ej.id || '');
+        if(dis) line += ' · 已禁用(.obsolete)';
+        else if(inst) line += ' · 已启用';
+        if(ej.dir) line += ' @ ' + ej.dir;
+        if(ej.folder) line += ' / ' + ej.folder;
+        st.textContent = line;
+      }
+    }catch(ex){
+      if(st) st.textContent = '扩展状态获取失败: ' + (ex.message || ex);
+    }
+  }catch(e){
+    if(st) st.textContent = '提示词 API 失败: ' + (e.message || e);
+    if(box) box.innerHTML = '<div class="muted">加载失败，请确认服务已启动</div>';
+    toast('提示词加载失败: ' + (e.message || e));
+  }
+}
+
+function openPromptEditor(p){
+  const title = window.prompt('标题', (p && p.title) || '');
+  if(title === null) return;
+  const mode = window.prompt('模式 append | prepend | replace', (p && p.mode) || 'append');
+  if(mode === null) return;
+  const body = window.prompt('正文', (p && p.body) || '');
+  if(body === null) return;
+  const enabled = window.confirm('是否启用该提示词？');
+  savePrompt({
+    id: (p && p.id) || '',
+    title: title,
+    mode: (mode || 'append').trim(),
+    body: body,
+    enabled: !!enabled
+  });
+}
+function editPrompt(p){ openPromptEditor(p); }
+function editPromptById(id){ editPrompt(window.__prompts && window.__prompts[id]); }
+
+async function savePrompt(p){
+  try{
+    const j = await jsend('/api/prompts', 'POST', p);
+    if(j && j.ok === false){ toast(j.message || '保存失败'); return; }
+    toast('已保存');
+    await refreshPrompts();
+  }catch(e){
+    toast('保存失败: ' + (e.message || e));
+  }
+}
+
+async function togglePrompt(id){
+  const p = window.__prompts && window.__prompts[id];
+  if(!p){ toast('未找到提示词'); return; }
+  const next = Object.assign({}, p, { enabled: !p.enabled });
+  await savePrompt(next);
+}
+
+async function deletePrompt(id){
+  if(!window.confirm('删除该提示词？')) return;
+  try{
+    const j = await jsend('/api/prompts?id=' + encodeURIComponent(id), 'DELETE');
+    if(j && j.ok === false){ toast(j.message || '删除失败'); return; }
+    toast('已删除');
+    await refreshPrompts();
+  }catch(e){
+    toast('删除失败: ' + (e.message || e));
+  }
+}
+
+async function extAction(action){
+  const st = document.getElementById('extStatus');
+  if(st) st.textContent = '执行中: ' + action + '…';
+  try{
+    const j = await jsend('/api/extension?action=' + encodeURIComponent(action), 'POST');
+    if(j && j.ok === false){
+      toast(j.message || (action + ' 失败'));
+    }else{
+      toast('扩展 ' + action + ' 成功' + (j.path ? (' → ' + j.path) : ''));
+    }
+    await refreshPrompts();
+  }catch(e){
+    if(st) st.textContent = '扩展操作失败: ' + (e.message || e);
+    toast('扩展操作失败: ' + (e.message || e));
+  }
 }
 
 async function refreshAll(){ await Promise.all([refreshMetrics(), refreshStatus(), refreshConfig()]); if(currentPage==='models') refreshFamilies(); }

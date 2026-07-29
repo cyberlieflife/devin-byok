@@ -18,6 +18,8 @@ import (
 	"devin-byok/internal/version"
 	"devin-byok/internal/update"
 	"devin-byok/internal/lsinstall"
+	"devin-byok/internal/promptstore"
+	"devin-byok/internal/extinstall"
 	"devin-byok/internal/upstream/openai"
 )
 
@@ -50,6 +52,8 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/update/apply", s.handleAPIUpdateApply)
 	mux.HandleFunc("/api/update/progress", s.handleAPIUpdateProgress)
 	s.registerExtraAPI(mux)
+	mux.HandleFunc("/api/prompts", s.handleAPIPrompts)
+	mux.HandleFunc("/api/extension", s.handleAPIExtension)
 }
 
 func (s *Server) getConfigPath() string {
@@ -107,11 +111,14 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 			"codemap_fast_model":        cfg.Features.CodeMapFastModel,
 			"codemap_smart_model":       cfg.Features.CodeMapSmartModel,
 			"command_model":            cfg.Features.CommandModel,
+			"fast_context_model":       cfg.Features.FastContextModel,
+			"enable_fast_context":      cfg.Features.EnableFastContext,
 			"deepwiki_model_resolved":   cfg.FeatureModelID("deepwiki"),
 			"codemap_model_resolved":    cfg.FeatureModelID("codemap"),
 			"codemap_fast_model_resolved":  cfg.FeatureModelID("codemap_fast"),
 			"codemap_smart_model_resolved": cfg.FeatureModelID("codemap_smart"),
 			"command_model_resolved":     cfg.FeatureModelID("command"),
+			"fast_context_model_resolved": cfg.FeatureModelID("fast_context"),
 			"default_model":        cfg.DefaultModelID(),
 			"models":               cfg.ModelList(),
 			"config_path":          s.getConfigPath(),
@@ -208,12 +215,17 @@ func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
 	cfg := s.GetConfig()
 	switch action {
 	case "start":
-		// 单 GUI / 内嵌模式：服务已在本进程，仅 apply portal
+		// 单 GUI / 内嵌模式：服务已在本进程，仅 apply portal + 启用提示词扩展
 		if _, err := devin.ApplyPortal(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys); err != nil {
 			writeJSON(w, map[string]any{"ok": false, "message": "apply 失败: " + err.Error()})
 			return
 		}
-		writeJSON(w, map[string]any{"ok": true, "message": "服务已在运行（已 apply）"})
+		if _, err := extinstall.InstallFromFS(extinstall.ExtFS, extinstall.ExtRoot); err != nil {
+			logx.Warnf("extension install: %v", err)
+		} else {
+			_ = extinstall.Enable()
+		}
+		writeJSON(w, map[string]any{"ok": true, "message": "服务已在运行（已 apply + 提示词扩展）"})
 	case "install-wrapper", "install_wrapper":
 		meta, err := lsinstall.Install(cfg.Devin.InstallDir)
 		if err != nil {
@@ -228,15 +240,20 @@ func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, map[string]any{"ok": true, "message": "wrapper 已卸载还原"})
 	case "stop":
-		// 保存计数、restore settings、清空日志
+		// 保存计数、restore settings、禁用提示词扩展、清空日志
 		MetricsSave()
 		MetricsClearLogs()
+		if err := extinstall.Disable(); err != nil {
+			logx.Warnf("extension disable: %v", err)
+		} else {
+			logx.Infof("extension disabled")
+		}
 		if _, err := devin.RestorePortal(); err != nil {
 			logx.Warnf("control stop restore: %v", err)
 		} else {
 			logx.Infof("control stop restore ok")
 		}
-		writeJSON(w, map[string]any{"ok": true, "message": "已保存计数、restore settings 并停止（日志已清空）"})
+		writeJSON(w, map[string]any{"ok": true, "message": "已保存计数、restore、禁用扩展并停止（日志已清空）"})
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
@@ -377,3 +394,86 @@ func (s *Server) handleAPIUpdateProgress(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, update.GetProgress())
 }
 
+
+
+// handleAPIPrompts 系统提示词 CRUD（扩展与 GUI 共用）。
+func (s *Server) handleAPIPrompts(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		list, err := promptstore.Load()
+		if err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "prompts": list, "path": promptstore.Path()})
+	case http.MethodPost, http.MethodPut:
+		var p promptstore.Prompt
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": "bad json: " + err.Error()})
+			return
+		}
+		list, err := promptstore.Upsert(p)
+		if err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "prompts": list})
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			writeJSON(w, map[string]any{"ok": false, "message": "missing id"})
+			return
+		}
+		list, err := promptstore.Delete(id)
+		if err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "prompts": list})
+	default:
+		http.Error(w, "method not allowed", 405)
+	}
+}
+
+// handleAPIExtension 扩展安装状态。
+func (s *Server) handleAPIExtension(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, map[string]any{
+			"ok": true,
+			"installed": extinstall.IsInstalled(),
+			"disabled": extinstall.IsDisabled(),
+			"id": extinstall.ExtID,
+			"dir": extinstall.UserExtensionsDir(),
+			"folder": extinstall.FolderName(),
+		})
+	case http.MethodPost:
+		action := r.URL.Query().Get("action")
+		switch action {
+		case "install":
+			dst, err := extinstall.InstallFromFS(extinstall.ExtFS, extinstall.ExtRoot)
+			if err != nil {
+				writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+				return
+			}
+			_ = extinstall.Enable()
+			writeJSON(w, map[string]any{"ok": true, "path": dst})
+		case "disable":
+			if err := extinstall.Disable(); err != nil {
+				writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+				return
+			}
+			writeJSON(w, map[string]any{"ok": true})
+		case "uninstall":
+			if err := extinstall.Uninstall(); err != nil {
+				writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+				return
+			}
+			writeJSON(w, map[string]any{"ok": true})
+		default:
+			writeJSON(w, map[string]any{"ok": false, "message": "action=install|disable|uninstall"})
+		}
+	default:
+		http.Error(w, "method not allowed", 405)
+	}
+}

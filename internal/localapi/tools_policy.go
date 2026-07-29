@@ -12,11 +12,13 @@ import (
 	"devin-byok/internal/upstream/openai"
 )
 
-// ?????mode ???????deny ?????
+// 工具分类：按 tools.mode / allow / deny 过滤。
 var (
 	toolReadOnly = map[string]bool{
 		"ask_user_question":  true,
 		"code_search":        true,
+		"find_code_context": true,
+		"fast_context":      true,
 		"find_by_name":       true,
 		"grep_search":        true,
 		"list_dir":           true,
@@ -41,15 +43,15 @@ var (
 		"command_status": true,
 		"run_command":    true,
 	}
-	// ?? LS ????????????????????
+	// 语言服务侧对工作区外搜索更敏感的工具
 	toolWorkspaceSearch = map[string]bool{
-		"code_search":   true,
-		"find_by_name":  true,
-		"grep_search":   true,
+		"code_search":  true,
+		"find_by_name": true,
+		"grep_search":  true,
 	}
 )
 
-// filterToolsByPolicy ? tools.mode / allow / deny ???? tools?
+// filterToolsByPolicy 按 tools.mode / allow / deny 过滤上游可见 tools。
 func filterToolsByPolicy(tools []openai.Tool, cfg *config.File) ([]openai.Tool, string) {
 	mode := cfg.ToolsMode()
 	if !cfg.Features.EnableCascadeTools || mode == "off" {
@@ -93,12 +95,52 @@ func toolAllowedInMode(name, mode string) bool {
 	}
 }
 
-// validateToolCalls ??? FUNCTION_CALL ????? JSON / ??????
+// writeEditPathKeys Cascade/上游常见的写入路径字段名。
+var writeEditPathKeys = []string{
+	"TargetFile", "target_file", "targetFile",
+	"FilePath", "file_path", "filePath", "filepath",
+	"Path", "path", "file", "filename", "FileName",
+}
+
+func mapHasWritePath(m map[string]any) (string, bool) {
+	for _, k := range writeEditPathKeys {
+		if v, ok := m[k]; ok {
+			s := strings.TrimSpace(fmt.Sprint(v))
+			if s != "" && s != "<nil>" {
+				return k, true
+			}
+		}
+	}
+	// 大小写不敏感兜底
+	for k, v := range m {
+		lk := strings.ToLower(strings.TrimSpace(k))
+		if lk == "targetfile" || lk == "target_file" || lk == "filepath" || lk == "file_path" || lk == "path" || lk == "file" || lk == "filename" {
+			s := strings.TrimSpace(fmt.Sprint(v))
+			if s != "" && s != "<nil>" {
+				return k, true
+			}
+		}
+	}
+	return "", false
+}
+
+func isWriteEditToolName(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	keys := []string{"write_to_file", "write_file", "edit_file", "create_file", "search_replace", "apply_patch", "modify_file", "append_file"}
+	for _, k := range keys {
+		if strings.Contains(n, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateToolCalls 校验 FUNCTION_CALL 参数是否为合法 JSON 等。
 func validateToolCalls(calls []openai.ToolCall) (ok []openai.ToolCall, errText string) {
 	return validateToolCallsEx(calls, nil)
 }
 
-// validateToolCallsEx ????????????????
+// validateToolCallsEx 在 validateToolCalls 基础上增加工作区路径检查。
 func validateToolCallsEx(calls []openai.ToolCall, workspaceRoots []string) (ok []openai.ToolCall, errText string) {
 	if len(calls) == 0 {
 		return nil, ""
@@ -107,7 +149,7 @@ func validateToolCallsEx(calls []openai.ToolCall, workspaceRoots []string) (ok [
 	for _, tc := range calls {
 		name := strings.TrimSpace(tc.Function.Name)
 		if name == "" {
-			problems = append(problems, "????????")
+			problems = append(problems, "工具名称缺失")
 			continue
 		}
 		args := strings.TrimSpace(tc.Function.Arguments)
@@ -116,26 +158,38 @@ func validateToolCallsEx(calls []openai.ToolCall, workspaceRoots []string) (ok [
 			args = "{}"
 		}
 		if !json.Valid([]byte(args)) {
-			problems = append(problems, fmt.Sprintf("%s ?????? JSON???????", name))
+			problems = append(problems, fmt.Sprintf("%s 参数不是合法 JSON，已跳过", name))
 			continue
 		}
 		var v any
 		if err := json.Unmarshal([]byte(args), &v); err != nil {
-			problems = append(problems, fmt.Sprintf("%s ??????: %v", name, err))
+			problems = append(problems, fmt.Sprintf("%s 参数解析失败: %v", name, err))
 			continue
+		}
+		// write/edit 必须带目标路径，避免空 {} 或残缺参数导致「TargetFile 未传入」截停
+		if isWriteEditToolName(name) {
+			m, ok := v.(map[string]any)
+			if !ok {
+				problems = append(problems, fmt.Sprintf("%s 参数必须是 JSON 对象且包含 TargetFile/path", name))
+				continue
+			}
+			if _, ok := mapHasWritePath(m); !ok {
+				problems = append(problems, fmt.Sprintf("%s 缺少 TargetFile/path，已跳过（防止残缺写入截停）", name))
+				continue
+			}
 		}
 		switch v.(type) {
 		case map[string]any, []any:
 		default:
-			problems = append(problems, fmt.Sprintf("%s ???? JSON ??", name))
+			problems = append(problems, fmt.Sprintf("%s 参数须为 JSON 对象/数组", name))
 			continue
 		}
 
-		// ???????? grep/code_search ?????????
+		// 搜索类工具：路径落在工作区外时拦截，避免语言服务报错
 		if toolWorkspaceSearch[name] && len(workspaceRoots) > 0 {
 			if p := extractToolPath(name, v); p != "" && pathOutsideWorkspace(p, workspaceRoots) {
 				problems = append(problems, fmt.Sprintf(
-					"%s ?? %s ????????%s???????????????????????????????????????? run_command ??",
+					"%s 路径 %s 不在当前工作区（%s）内；请改用工作区内路径，或对区外目录使用 run_command",
 					name, p, strings.Join(workspaceRoots, ", ")))
 				continue
 			}
@@ -143,10 +197,10 @@ func validateToolCallsEx(calls []openai.ToolCall, workspaceRoots []string) (ok [
 		ok = append(ok, tc)
 	}
 	if len(ok) == 0 && len(problems) > 0 {
-		return nil, "??????: " + strings.Join(problems, "?") + "?"
+		return nil, "工具调用全部无效: " + strings.Join(problems, "；") + "。"
 	}
 	if len(problems) > 0 {
-		return ok, "???????: " + strings.Join(problems, "?")
+		return ok, "部分工具调用已跳过: " + strings.Join(problems, "；")
 	}
 	return ok, ""
 }
@@ -156,7 +210,7 @@ func extractToolPath(toolName string, args any) string {
 	if !ok {
 		return ""
 	}
-	// ??????????
+	// 常见路径字段
 	keys := []string{"SearchPath", "search_path", "search_folder_absolute_uri", "SearchDirectory", "DirectoryPath", "directory_path", "file_path", "AbsolutePath", "path"}
 	for _, k := range keys {
 		if v, ok := m[k]; ok {
@@ -171,7 +225,7 @@ func extractToolPath(toolName string, args any) string {
 
 var winPathRe = regexp.MustCompile(`(?i)[a-z]:[\\/][^\x00-\x1f"<>|*?]{1,240}`)
 
-// extractWorkspaceRoots ?????????????????
+// extractWorkspaceRoots 从请求正文猜测当前工作区根路径。
 func extractWorkspaceRoots(plain []byte) []string {
 	if len(plain) == 0 {
 		return nil
@@ -184,7 +238,7 @@ func extractWorkspaceRoots(plain []byte) []string {
 		if p == "" || found[p] {
 			return
 		}
-		// ????
+		// 过滤系统目录噪声
 		low := strings.ToLower(p)
 		if strings.Contains(low, "\\windows\\") || strings.Contains(low, "/windows/") {
 			return
@@ -200,19 +254,18 @@ func extractWorkspaceRoots(plain []byte) []string {
 			add(filepath.FromSlash(u.Path))
 		}
 	}
-	// ????? workspace ?????
-	for _, m := range regexp.MustCompile(`(?is)workspace[^\\x00]{0,80}?([a-zA-Z]:[\\\\/][^\\x00\\s"']{2,160})`).FindAllStringSubmatch(text, -1) {
+	// 靠近 workspace 字样的路径
+	for _, m := range regexp.MustCompile(`(?is)workspace[^\x00]{0,80}?([a-zA-Z]:[\\/][^\x00\s"']{2,160})`).FindAllStringSubmatch(text, -1) {
 		if len(m) > 1 {
 			add(m[1])
 		}
 	}
-	// ??????
+	// 正文中的 Windows 路径
 	for _, m := range winPathRe.FindAllString(text, -1) {
-		// ?????/?????????????????????
 		add(m)
 	}
 
-	// ???????????????????? 2~4 ??
+	// 限制数量，避免噪声根过多
 	if len(roots) > 6 {
 		roots = roots[:6]
 	}
@@ -242,7 +295,7 @@ func pathOutsideWorkspace(path string, roots []string) bool {
 		return false
 	}
 	p := normalizePath(path)
-	// ????????????
+	// 相对路径不判定
 	if !regexp.MustCompile(`(?i)^[a-z]:\\`).MatchString(p) && !strings.HasPrefix(p, `\\`) {
 		return false
 	}
@@ -258,41 +311,41 @@ func pathOutsideWorkspace(path string, roots []string) bool {
 	return true
 }
 
-// humanizeChatError ???/?????????????
+// humanizeChatError 将上游/网络错误转成可读中文。
 func humanizeChatError(err error) string {
 	if err == nil {
-		return "????"
+		return "未知错误"
 	}
 	msg := err.Error()
 	low := strings.ToLower(msg)
 	switch {
 	case strings.Contains(low, "not within any current workspace") || strings.Contains(low, "outside a currently open workspace"):
-		return "???????????????????????? Devin ??????????????????tools.mode=full ???? run_command ???"
+		return "搜索路径不在当前工作区内。请在 Devin 中打开对应文件夹，或将 tools.mode 设为 full 后用 run_command 处理区外路径。"
 	case strings.Contains(low, "timeout") || strings.Contains(low, "deadline"):
-		return "?????????????????????? config ? tools.timeout_sec / upstream.timeout_sec ????"
+		return "上游或工具调用超时。请在配置中增大 tools.timeout_sec（有工具时）或 upstream.timeout_sec（无工具时）。"
 	case strings.Contains(low, "connection refused"):
-		return "?????????????? base_url ????????"
+		return "无法连接上游，请检查 base_url 与本地模型服务是否已启动。"
 	case strings.Contains(low, "401") || strings.Contains(low, "403") || strings.Contains(low, "auth"):
-		return "?????????? api_key?"
+		return "上游鉴权失败，请检查 api_key。"
 	case strings.Contains(low, "tool") && strings.Contains(low, "support"):
-		return "??????????? function calling/tools????????????? tools.mode ?? off?"
+		return "上游可能不支持 function calling/tools。可尝试将 tools.mode 设为 off。"
 	default:
-		return "BYOK ????: " + msg
+		return "BYOK 上游错误: " + msg
 	}
 }
 
-// needsWorkspaceHint ?????????????????
+// needsWorkspaceHint 检测是否需要注入“请打开工作区”提示。
 func needsWorkspaceHint(plain []byte, userText string, msgs []openai.ChatMessage) bool {
 	blob := string(plain)
 	low := strings.ToLower(blob + "\n" + userText)
 	markers := []string{
 		"no folder is open",
 		"no workspace",
-		"???????",
-		"??????",
+		"没有打开文件夹",
+		"未打开工作区",
 		"no open workspace",
 		"open a folder",
-		"?????",
+		"打开文件夹",
 	}
 	for _, m := range markers {
 		if strings.Contains(low, strings.ToLower(m)) {
@@ -300,25 +353,28 @@ func needsWorkspaceHint(plain []byte, userText string, msgs []openai.ChatMessage
 		}
 	}
 	for _, m := range msgs {
-		if m.Role == "assistant" && (strings.Contains(openai.TextContent(m.Content), "???????") || strings.Contains(openai.TextContent(m.Content), "??????")) {
-			return true
+		if m.Role == "assistant" {
+			c := openai.TextContent(m.Content)
+			if strings.Contains(c, "没有打开文件夹") || strings.Contains(c, "未打开工作区") {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-const workspaceHintText = "???????????????????????????????????? ask_user_question ?????????????????"
+const workspaceHintText = "当前可能没有打开工作区文件夹。请先在 Devin 中打开项目目录；若只需问答可不调用工作区工具，或使用 ask_user_question 向用户确认路径。"
 
-// cascadeToolsHintText ???????????????????
-const cascadeToolsHintText = "???????grep_search / code_search / find_by_name ??????????????????????????????????????? run_command?? rg/findstr???????? Devin ???????read_file/list_dir ????????????"
+// cascadeToolsHintText 提示模型优先用检索/读写工具，命令工具谨慎使用。
+const cascadeToolsHintText = "优先使用 grep_search / code_search / find_by_name 检索，再用 read_file/list_dir 阅读；需要终端时再 run_command（如 rg/findstr）。避免在未确认路径时对工作区外盲目搜索。"
 
-// injectWorkspaceHint ? messages ????? system ???????????
+// injectWorkspaceHint 向 messages 注入工作区提示 system 消息。
 func injectWorkspaceHint(msgs []openai.ChatMessage) []openai.ChatMessage {
-	return injectSystemNote(msgs, workspaceHintText, "?????????")
+	return injectSystemNote(msgs, workspaceHintText, "没有打开工作区")
 }
 
 func injectCascadeToolsHint(msgs []openai.ChatMessage) []openai.ChatMessage {
-	return injectSystemNote(msgs, cascadeToolsHintText, "??????????????")
+	return injectSystemNote(msgs, cascadeToolsHintText, "优先使用 grep_search")
 }
 
 func injectSystemNote(msgs []openai.ChatMessage, note, dedupeKey string) []openai.ChatMessage {
@@ -337,4 +393,22 @@ func injectSystemNote(msgs []openai.ChatMessage, note, dedupeKey string) []opena
 	out = append(out, openai.ChatMessage{Role: "system", Content: note})
 	out = append(out, msgs...)
 	return out
+}
+
+
+const fastContextAgentHintText = `You are the Fast Context (Instant Context) retrieval agent for Cascade/Devin.
+Your job is to quickly gather the most relevant code locations for the user's query.
+
+Rules:
+1. Prefer tools: code_search, grep_search, find_by_name, read_file, list_dir. Do not use shell to create/edit files.
+2. Search broadly then read only the most relevant files/sections.
+3. In your final answer, list concrete file paths and line ranges that matter, with a one-line reason each.
+4. Keep the answer compact and structured. Example:
+   - path/to/file.go:12-48 — handles X
+   - path/to/other.ts:80-120 — defines Y
+5. If nothing relevant is found, say so clearly and suggest 1-2 alternate search terms.
+6. Do not invent file paths. Only cite paths you actually observed via tools.`
+
+func injectFastContextAgentHint(msgs []openai.ChatMessage) []openai.ChatMessage {
+	return injectSystemNote(msgs, fastContextAgentHintText, "Fast Context (Instant Context) retrieval agent")
 }

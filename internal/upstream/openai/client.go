@@ -103,9 +103,9 @@ type ToolFunction struct {
 }
 
 // ToolCall 上游返回的工具调用。
-// ToolCall ??????????
+// ToolCall 上游返回的工具调用。
 type ToolCall struct {
-	// Index ?????? OpenAI index????????
+	// Index 流式增量中的 OpenAI index（可选）。
 	Index    *int   `json:"index,omitempty"`
 	ID       string `json:"id"`
 	Type     string `json:"type"`
@@ -115,12 +115,12 @@ type ToolCall struct {
 	} `json:"function"`
 }
 
-// MergeToolCallDeltas ? index ???? tool_calls ???
+// MergeToolCallDeltas 按 index 合并流式 tool_calls 增量。
 func MergeToolCallDeltas(dst []ToolCall, deltas []ToolCall) []ToolCall {
 	if len(deltas) == 0 {
 		return dst
 	}
-	// ? map ? index ???????????
+	// ? map ? index …
 	type slot struct {
 		tc  ToolCall
 		idx int
@@ -145,7 +145,7 @@ func MergeToolCallDeltas(dst []ToolCall, deltas []ToolCall) []ToolCall {
 			for i := range out {
 				if out[i].ID == d.ID {
 					k = i
-					// ???? key ???
+					// … key …
 					byIdx[k] = i
 					found = true
 					// merge into out[i]
@@ -200,10 +200,14 @@ type ChatOptions struct {
 	MaxTokens      int
 	TopP           *float64
 	Tools          []Tool
+	// ToolChoice OpenAI tool_choice：auto|required|none|或指定函数；空则有 tools 时默认 auto
+	ToolChoice     any
 	PromptCacheKey string
 	// 每模型供应商覆盖（cursor-byok 模式）
 	BaseURL string
 	APIKey  string
+	// HTTPTimeout 单次请求总超时；0 表示仅依赖 context（适合长工具/流式）
+	HTTPTimeout time.Duration
 }
 
 // Usage 上游 token/缓存统计（cursor-byok 同款口径）。
@@ -299,12 +303,9 @@ type StreamDelta struct {
 }
 
 func New(cfg config.UpstreamConfig) *Client {
-	timeout := time.Duration(cfg.TimeoutSec) * time.Second
-	if timeout <= 0 {
-		timeout = 120 * time.Second
-	}
+	// Client.Timeout=0：总超时交给 context / ChatOptions.HTTPTimeout，避免 tools 长请求被 120s 误杀
 	return &Client{
-		httpClient: &http.Client{Timeout: timeout},
+		httpClient: newHTTPClient(0),
 		cfg:        cfg,
 		endpoint:   config.NormalizeChatCompletionsURL(cfg.BaseURL),
 	}
@@ -314,13 +315,9 @@ func New(cfg config.UpstreamConfig) *Client {
 func (c *Client) Update(cfg config.UpstreamConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	timeout := time.Duration(cfg.TimeoutSec) * time.Second
-	if timeout <= 0 {
-		timeout = 120 * time.Second
-	}
 	c.cfg = cfg
 	c.endpoint = config.NormalizeChatCompletionsURL(cfg.BaseURL)
-	c.httpClient = &http.Client{Timeout: timeout}
+	c.httpClient = newHTTPClient(0)
 }
 
 func (c *Client) snapshot() (config.UpstreamConfig, string, *http.Client) {
@@ -335,8 +332,9 @@ func (c *Client) Endpoint() string {
 }
 
 func (c *Client) resolveEndpointKey(opt ChatOptions) (endpoint, apiKey string, headers map[string]string, httpClient *http.Client) {
-	cfg, ep, hc := c.snapshot()
-	endpoint, apiKey, httpClient = ep, cfg.APIKey, hc
+	cfg, ep, _ := c.snapshot()
+	endpoint, apiKey = ep, cfg.APIKey
+	httpClient = c.clientFor(opt)
 	headers = map[string]string{}
 	for k, v := range cfg.Headers {
 		headers[k] = v
@@ -348,6 +346,35 @@ func (c *Client) resolveEndpointKey(opt ChatOptions) (endpoint, apiKey string, h
 		apiKey = opt.APIKey
 	}
 	return endpoint, apiKey, headers, httpClient
+}
+
+func newHTTPClient(total time.Duration) *http.Client {
+	tr := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          64,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   20 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		// 不设 ResponseHeaderTimeout：非流式+工具时模型可能长时间才返回首包
+	}
+	return &http.Client{Timeout: total, Transport: tr}
+}
+
+// clientFor 按本次选项构造 Client；HTTPTimeout>0 时限制总时长，否则仅靠 ctx。
+func (c *Client) clientFor(opt ChatOptions) *http.Client {
+	if opt.HTTPTimeout > 0 {
+		return newHTTPClient(opt.HTTPTimeout)
+	}
+	_, _, hc := c.snapshot()
+	if hc != nil {
+		return hc
+	}
+	return newHTTPClient(0)
 }
 
 func (c *Client) buildChatRequest(model string, messages []ChatMessage, stream bool, opt ChatOptions) chatRequest {
@@ -394,7 +421,11 @@ func (c *Client) buildChatRequest(model string, messages []ChatMessage, stream b
 	}
 	if len(opt.Tools) > 0 {
 		req.Tools = opt.Tools
-		req.ToolChoice = "auto"
+		if opt.ToolChoice != nil {
+			req.ToolChoice = opt.ToolChoice
+		} else {
+			req.ToolChoice = "auto"
+		}
 	}
 	if key := strings.TrimSpace(opt.PromptCacheKey); key != "" {
 		req.PromptCacheKey = key

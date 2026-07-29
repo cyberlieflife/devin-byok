@@ -121,6 +121,10 @@ type FeaturesConfig struct {
 	CodeMapSmartModel string `yaml:"codemap_smart_model"`
 	// CommandModel Generate Git Commit Message 等 Command 功能默认/强制模型（models[].id）
 	CommandModel string `yaml:"command_model"`
+	// EnableFastContext Fast Context（find_code_context / Instant Context）支持
+	EnableFastContext bool `yaml:"enable_fast_context"`
+	// FastContextModel Fast Context 子代理/检索规划所用模型（models[].id）
+	FastContextModel string `yaml:"fast_context_model"`
 }
 
 // UpdateConfig 在线更新（GitHub Releases）。
@@ -134,7 +138,7 @@ type UpdateConfig struct {
 
 
 
-// ToolsConfig Cascade ?????P0/P1??
+// ToolsConfig Cascade 工具策略（mode/timeout/allow/deny）。
 // CacheConfig 本地响应/会话缓存。
 type CacheConfig struct {
 	// Enabled 总开关（prompt 缓存 + 可选本地响应缓存）
@@ -155,15 +159,15 @@ type CacheConfig struct {
 
 type ToolsConfig struct {
 	// Mode: off | readonly | standard | full
-	// off=?? tools?readonly=???standard=??????full=? run_command
+	// Mode: off | readonly | standard | full（full 含 run_command）
 	Mode string `yaml:"mode"`
-	// TimeoutSec ???????????0 ??????? 300s ? upstream.timeout_sec?
+	// TimeoutSec 有工具时聊天总超时；0 则至少 300s 或跟随 upstream.timeout_sec
 	TimeoutSec int `yaml:"timeout_sec"`
-	// WorkspaceHint ?????????????? true?
+	// WorkspaceHint 是否注入工作区提示，默认 true
 	WorkspaceHint *bool `yaml:"workspace_hint"`
-	// Allow ????????
+	// Allow 额外允许的工具名
 	Allow []string `yaml:"allow"`
-	// Deny ???????????? mode/allow?
+	// Deny 禁止的工具名（优先于 mode/allow）
 	Deny []string `yaml:"deny"`
 }
 
@@ -216,6 +220,8 @@ type GUIPatch struct {
 	CodeMapFastModel     *string `json:"codemap_fast_model"`
 	CodeMapSmartModel    *string `json:"codemap_smart_model"`
 	CommandModel         *string `json:"command_model"`
+	FastContextModel     *string `json:"fast_context_model"`
+	EnableFastContext    *bool   `json:"enable_fast_context"`
 	UpdateEnabled        *bool   `json:"update_enabled"`
 	UpdateAutoApply      *bool   `json:"update_auto_apply"`
 	UpdateRepo           *string `json:"update_repo"`
@@ -255,6 +261,12 @@ func (f *File) ApplyGUIPatch(p GUIPatch) {
 	}
 	if p.CommandModel != nil {
 		f.Features.CommandModel = strings.TrimSpace(*p.CommandModel)
+	}
+	if p.FastContextModel != nil {
+		f.Features.FastContextModel = strings.TrimSpace(*p.FastContextModel)
+	}
+	if p.EnableFastContext != nil {
+		f.Features.EnableFastContext = *p.EnableFastContext
 	}
 	if p.CodeMapModel != nil {
 		f.Features.CodeMapModel = strings.TrimSpace(*p.CodeMapModel)
@@ -320,6 +332,9 @@ func (f *File) applyDefaults() {
 		f.Features.EnableChat = true
 		f.Features.StubUnknownRPC = true
 	}
+	// 产品策略：取消混合模式，仅单机 pure_local（含 Fast Context 本地）
+	f.Features.PureLocal = true
+	f.Features.EnableFastContext = true
 		if f.Update.Repo == "" {
 		f.Update.Repo = "cyberlieflife/devin-byok"
 	}
@@ -626,7 +641,7 @@ func (f *File) validate() error {
 		}
 		seen[m.ID] = true
 		if m.ContextWindow > 0 && m.MaxTokens > 0 && m.MaxTokens > m.ContextWindow {
-			return fmt.Errorf("model %s: max_tokens(%d) > context_window(%d)????????", m.ID, m.MaxTokens, m.ContextWindow)
+			return fmt.Errorf("model %s: max_tokens(%d) 不能大于 context_window(%d)", m.ID, m.MaxTokens, m.ContextWindow)
 		}
 	}
 	switch NormalizeToolsMode(f.Tools.Mode) {
@@ -637,7 +652,7 @@ func (f *File) validate() error {
 	return nil
 }
 
-// NormalizeToolsMode ????????
+// NormalizeToolsMode 规范化 tools.mode。
 func NormalizeToolsMode(m string) string {
 	switch strings.ToLower(strings.TrimSpace(m)) {
 	case "", "std", "default":
@@ -655,12 +670,12 @@ func NormalizeToolsMode(m string) string {
 	}
 }
 
-// ToolsMode ??????? tools.mode?
+// ToolsMode 返回规范化后的 tools.mode。
 func (f *File) ToolsMode() string {
 	return NormalizeToolsMode(f.Tools.Mode)
 }
 
-// ToolsWorkspaceHint ???????????
+	// WorkspaceHint 是否注入工作区提示，默认 true
 func (f *File) ToolsWorkspaceHint() bool {
 	if f.Tools.WorkspaceHint == nil {
 		return true
@@ -668,7 +683,8 @@ func (f *File) ToolsWorkspaceHint() bool {
 	return *f.Tools.WorkspaceHint
 }
 
-// ResolveChatTimeoutSec ??????????? tools.timeout_sec ???
+	// TimeoutSec 有工具时聊天总超时；0 则至少 300s 或跟随 upstream.timeout_sec
+// ResolveChatTimeoutSec 聊天总超时：无工具用 upstream.timeout_sec；有工具优先 tools.timeout_sec。
 func (f *File) ResolveChatTimeoutSec(hasTools bool) int {
 	base := f.Upstream.TimeoutSec
 	if base <= 0 {
@@ -680,6 +696,7 @@ func (f *File) ResolveChatTimeoutSec(hasTools bool) int {
 	if f.Tools.TimeoutSec > 0 {
 		return f.Tools.TimeoutSec
 	}
+	// 有工具但未单独配置 tools.timeout_sec：至少 5 分钟，避免命令/写入场景过早断开
 	if base < 300 {
 		return 300
 	}
@@ -831,8 +848,8 @@ func (f *File) ResolveThinking(selectedUID string) string {
 	return th
 }
 
-// FeatureModelID 返回 DeepWiki/CodeMap 选用的模型变体 id（思考强度为单位）。
-// kind: deepwiki | codemap | codemap_fast | codemap_smart
+// FeatureModelID 返回功能绑定选用的模型变体 id（思考强度为单位）。
+// kind: deepwiki | codemap | codemap_fast | codemap_smart | command | fast_context
 // 无效或空时按回退链解析，最终 DefaultModelID。
 func (f *File) FeatureModelID(kind string) string {
 	if f == nil {
@@ -843,6 +860,8 @@ func (f *File) FeatureModelID(kind string) string {
 	switch k {
 	case "command", "commit", "commit_message", "git_commit":
 		candidates = append(candidates, f.Features.CommandModel)
+	case "fast_context", "fastcontext", "find_code_context", "instant_context":
+		candidates = append(candidates, f.Features.FastContextModel)
 	case "deepwiki", "wiki":
 		candidates = append(candidates, f.Features.DeepWikiModel)
 	case "codemap_fast", "fast":

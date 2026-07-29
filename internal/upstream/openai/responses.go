@@ -61,8 +61,8 @@ func NormalizeResponsesURL(baseURL string) string {
 }
 
 func (c *Client) resolveResponsesEndpoint(opt ChatOptions) (endpoint, apiKey string, headers map[string]string, httpClient *http.Client) {
-	cfg, _, hc := c.snapshot()
-	apiKey, httpClient = cfg.APIKey, hc
+	cfg, _, _ := c.snapshot()
+	apiKey, httpClient = cfg.APIKey, c.clientFor(opt)
 	headers = map[string]string{}
 	for k, v := range cfg.Headers {
 		headers[k] = v
@@ -163,7 +163,11 @@ func buildResponsesRequest(model string, messages []ChatMessage, stream bool, op
 		})
 	}
 	if len(req.Tools) > 0 {
-		req.ToolChoice = "auto"
+		if opt.ToolChoice != nil {
+			req.ToolChoice = opt.ToolChoice
+		} else {
+			req.ToolChoice = "auto"
+		}
 	}
 	return req
 }
