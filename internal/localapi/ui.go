@@ -14,6 +14,7 @@ import (
 	"devin-byok/internal/config"
 	"devin-byok/internal/desktop"
 	"devin-byok/internal/devin"
+	"devin-byok/internal/ideinject"
 	"devin-byok/internal/logx"
 	"devin-byok/internal/version"
 	"devin-byok/internal/update"
@@ -220,6 +221,9 @@ func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"ok": false, "message": "apply 失败: " + err.Error()})
 			return
 		}
+		if err := ideinject.ApplyContextUsageDonut(cfg.Devin.InstallDir); err != nil {
+			logx.Warnf("ideinject context-usage: %v", err)
+		}
 		if _, err := extinstall.InstallFromFS(extinstall.ExtFS, extinstall.ExtRoot); err != nil {
 			logx.Warnf("extension install: %v", err)
 		} else {
@@ -248,6 +252,7 @@ func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
 		} else {
 			logx.Infof("extension disabled")
 		}
+		_ = ideinject.RestoreContextUsageDonut()
 		if _, err := devin.RestorePortal(); err != nil {
 			logx.Warnf("control stop restore: %v", err)
 		} else {

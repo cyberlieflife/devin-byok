@@ -497,31 +497,42 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	for _, m := range cfg.ModelList() {
 		allowed = append(allowed, m.ID)
 	}
-	// 请求 model_uid 必须能在 family 模型列表中解析；禁止用全局 upstream.model 顶替
+	// 记录请求是否在 payload (field 21) 中显式指定了有效的 model_uid
+	hasExplicitModel := false
 	uiModel := strings.TrimSpace(parsed.ModelUID)
-	if uiModel == "" {
-		uiModel = pickModel(plain, cfg.DefaultModelID(), allowed)
+	if uiModel != "" {
+		if m, ok := cfg.ResolveModelUID(uiModel); ok {
+			uiModel = m.ID
+			hasExplicitModel = true
+		} else if _, ok := cfg.FindModel(uiModel); ok {
+			hasExplicitModel = true
+		}
 	}
-	// Command/Cascade 可能传来 family/upstream 变体（如 grok4.5）；解析到真实 models[].id
-	if m, ok := cfg.ResolveModelUID(uiModel); ok {
-		uiModel = m.ID
-	} else if _, ok := cfg.FindModel(uiModel); !ok {
+
+	if !hasExplicitModel {
 		uiModel = pickModel(plain, cfg.DefaultModelID(), allowed)
 		if m2, ok2 := cfg.ResolveModelUID(uiModel); ok2 {
 			uiModel = m2.ID
 		}
 	}
-	// Commit 模型绑定：生成 Commit 消息窗口内强制使用 command_model（若已配置）
-	if cmd := cfg.FeatureModelID("command"); cmd != "" && isCommitGenerationPending() {
-		if m, ok := cfg.ResolveModelUID(cmd); ok {
-			uiModel = m.ID
-		} else {
-			uiModel = cmd
+
+	// Commit 模型绑定：仅在生成 Commit 消息窗口且未显式强行指定其他有效模型时使用 command_model
+	isCommitPending := isCommitGenerationPending()
+	if isCommitPending {
+		// 消费掉 Commit 生成 pending 状态，防止残留在后续对话中
+		clearCommitGenerationPending()
+		if cmd := cfg.FeatureModelID("command"); cmd != "" && !hasExplicitModel {
+			if m, ok := cfg.ResolveModelUID(cmd); ok {
+				uiModel = m.ID
+			} else {
+				uiModel = cmd
+			}
 		}
 	}
-	// Fast Context（纯本地）：FC 标记或官方 mini 枚举 → 强制 fast_context_model
-	fastCtx := isFastContextChat(parsed, userText, plain) || looksLikeOfficialModelEnum(plain)
-	if fastCtx {
+
+	// Fast Context（纯本地）：仅在非用户显式选模型的前提下，由 FC 标记或官方 mini 枚举判定覆盖
+	fastCtx := isFastContextChat(parsed, userText, plain) || (!hasExplicitModel && looksLikeOfficialModelEnum(plain))
+	if fastCtx && !hasExplicitModel {
 		if fc := cfg.FeatureModelID("fast_context"); fc != "" {
 			if m, ok := cfg.ResolveModelUID(fc); ok {
 				uiModel = m.ID

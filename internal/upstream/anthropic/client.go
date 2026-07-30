@@ -1,4 +1,4 @@
-﻿package anthropic
+package anthropic
 
 import (
 	"bufio"
@@ -114,15 +114,21 @@ func (c *Client) StreamChat(ctx context.Context, baseURL, apiKey, model string, 
 		return openai.Usage{}, err
 	}
 	endpoint := normalizeMessagesURL(baseURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return openai.Usage{}, err
+	cli := c.http
+	if cli == nil {
+		cli = &http.Client{Timeout: 120 * time.Second}
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-	req.Header.Set("Accept", "text/event-stream")
-	resp, err := c.http.Do(req)
+	resp, err := doWithRetry(ctx, func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+		req.Header.Set("Accept", "text/event-stream")
+		return cli.Do(req)
+	})
 	if err != nil {
 		return openai.Usage{}, err
 	}
@@ -263,20 +269,65 @@ func convertUserContent(content any) any {
 	}
 }
 
+func isRetryableStatusCode(code int) bool {
+	return code == 429 || code == 500 || code == 502 || code == 504
+}
+
+func doWithRetry(ctx context.Context, fn func() (*http.Response, error)) (*http.Response, error) {
+	const maxRetries = 4
+	var lastResp *http.Response
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(3+attempt) * time.Second
+			select {
+			case <-ctx.Done():
+				if lastResp != nil {
+					return lastResp, ctx.Err()
+				}
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+
+		resp, err := fn()
+		if err != nil {
+			lastErr = err
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			continue
+		}
+
+		if isRetryableStatusCode(resp.StatusCode) && attempt < maxRetries {
+			resp.Body.Close()
+			lastResp = nil
+			continue
+		}
+
+		return resp, nil
+	}
+
+	return lastResp, lastErr
+}
+
 func (c *Client) do(ctx context.Context, baseURL, apiKey string, body []byte) ([]byte, int, error) {
 	endpoint := normalizeMessagesURL(baseURL)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, 0, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
 	cli := c.http
 	if cli == nil {
 		cli = &http.Client{Timeout: 120 * time.Second}
 	}
-	resp, err := cli.Do(req)
+	resp, err := doWithRetry(ctx, func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-api-key", apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+		return cli.Do(req)
+	})
 	if err != nil {
 		return nil, 0, err
 	}

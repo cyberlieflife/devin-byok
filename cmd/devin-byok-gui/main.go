@@ -15,6 +15,7 @@ import (
 	"devin-byok/internal/config"
 	"devin-byok/internal/desktop"
 	"devin-byok/internal/devin"
+	"devin-byok/internal/ideinject"
 	"devin-byok/internal/localapi"
 	"devin-byok/internal/logx"
 	"devin-byok/internal/lsinstall"
@@ -312,6 +313,7 @@ func stopService() string {
 	embedMu.Unlock()
 	if hasEmbed {
 		_, _ = devin.RestorePortal()
+	_ = ideinject.RestoreContextUsageDonut()
 		return "ok"
 	}
 	client := &http.Client{Timeout: 3 * time.Second}
@@ -324,6 +326,7 @@ func stopService() string {
 	}
 	_ = extinstall.Disable()
 	_, _ = devin.RestorePortal()
+	_ = ideinject.RestoreContextUsageDonut()
 	return "ok"
 }
 
@@ -371,6 +374,12 @@ func applyFromConfig() {
 		logx.Warnf("apply: %v", err)
 	} else {
 		logx.Infof("apply ok")
+	}
+	// 会话栏上下文圆圈：悬停四色挖空环
+	if err := ideinject.ApplyContextUsageDonut(cfg.Devin.InstallDir); err != nil {
+		logx.Warnf("ideinject context-usage: %v", err)
+	} else {
+		logx.Infof("ideinject context-usage ok")
 	}
 	// 启动时安装/启用 BYOK 提示词扩展
 	if _, err := extinstall.InstallFromFS(extinstall.ExtFS, extinstall.ExtRoot); err != nil {

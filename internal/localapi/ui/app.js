@@ -176,6 +176,7 @@ async function refreshFamilies(){
         <div class="muted small">upstream: ${escapeHtml((f.variants&&f.variants[0]&&f.variants[0].upstream_model)||'-')}</div>
         <div class="row gap" style="margin-top:12px">
           <button class="btn btn-secondary" onclick="editFamilyByUid('${escapeHtml(f.uid)}')">编辑</button>
+          <button class="btn btn-secondary" onclick="copyFamily('${escapeHtml(f.uid)}')">复制</button>
           <button class="btn btn-danger" onclick="deleteFamily('${escapeHtml(f.uid)}')">删除</button>
         </div>
       </div>`).join('');
@@ -322,6 +323,15 @@ function openFamilyModal(){
 }
 function closeFamilyModal(){ document.getElementById('familyModal').hidden = true }
 function editFamilyByUid(uid){ const f=window.__fams[uid]; if(!f){toast('模型不存在');return;} editFamily(f);}
+function copyFamily(uid){
+  const f=window.__fams[uid]; if(!f){toast('模型不存在');return;}
+  editFamily(f);
+  const title = document.getElementById('familyModalTitle');
+  if(title) title.textContent = '复制模型';
+  document.getElementById('f_uid').value = '';
+  document.getElementById('f_label').value = (f.label || f.uid) + ' Copy';
+  refreshUidHint();
+}
 function editFamily(f){
   const title = document.getElementById('familyModalTitle');
   if(title) title.textContent = '编辑模型';

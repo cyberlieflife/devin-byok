@@ -255,16 +255,18 @@ func (c *Client) ChatResponses(ctx context.Context, model string, messages []Cha
 		return ChatResult{}, fmt.Errorf("模型未配置 base_url（Responses）")
 	}
 	raw, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
-	if err != nil {
-		return ChatResult{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := httpClient.Do(req)
+	resp, err := doWithRetry(ctx, func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		return httpClient.Do(req)
+	})
 	if err != nil {
 		return ChatResult{}, HumanizeError(err)
 	}
@@ -295,17 +297,19 @@ func (c *Client) StreamChatResponses(ctx context.Context, model string, messages
 		return Usage{}, fmt.Errorf("模型未配置 base_url（Responses）")
 	}
 	raw, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
-	if err != nil {
-		return Usage{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Accept", "text/event-stream")
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := httpClient.Do(req)
+	resp, err := doWithRetry(ctx, func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Accept", "text/event-stream")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		return httpClient.Do(req)
+	})
 	if err != nil {
 		return Usage{}, HumanizeError(err)
 	}

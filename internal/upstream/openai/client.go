@@ -436,22 +436,66 @@ func (c *Client) buildChatRequest(model string, messages []ChatMessage, stream b
 	return req
 }
 
+func isRetryableStatusCode(code int) bool {
+	return code == 429 || code == 500 || code == 502 || code == 504
+}
+
+func doWithRetry(ctx context.Context, fn func() (*http.Response, error)) (*http.Response, error) {
+	const maxRetries = 4
+	var lastResp *http.Response
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(3+attempt) * time.Second
+			select {
+			case <-ctx.Done():
+				if lastResp != nil {
+					return lastResp, ctx.Err()
+				}
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+
+		resp, err := fn()
+		if err != nil {
+			lastErr = err
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			continue
+		}
+
+		if isRetryableStatusCode(resp.StatusCode) && attempt < maxRetries {
+			resp.Body.Close()
+			lastResp = nil
+			continue
+		}
+
+		return resp, nil
+	}
+
+	return lastResp, lastErr
+}
 func (c *Client) doJSON(ctx context.Context, body any) ([]byte, int, error) {
 	cfg, endpoint, httpClient := c.snapshot()
 	if endpoint == "" {
 		return nil, 0, fmt.Errorf("upstream.base_url 为空")
 	}
 	raw, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
-	if err != nil {
-		return nil, 0, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	for k, v := range cfg.Headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := httpClient.Do(req)
+	resp, err := doWithRetry(ctx, func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+		for k, v := range cfg.Headers {
+			req.Header.Set(k, v)
+		}
+		return httpClient.Do(req)
+	})
 	if err != nil {
 		return nil, 0, HumanizeError(err)
 	}
@@ -500,16 +544,18 @@ func (c *Client) Chat(ctx context.Context, model string, messages []ChatMessage,
 		return zero, fmt.Errorf("模型未配置 base_url（请在 Family 供应商中填写）")
 	}
 	raw, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
-	if err != nil {
-		return zero, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := httpClient.Do(req)
+	resp, err := doWithRetry(ctx, func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		return httpClient.Do(req)
+	})
 	if err != nil {
 		return zero, HumanizeError(err)
 	}
@@ -546,17 +592,19 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []ChatMe
 		return Usage{}, fmt.Errorf("模型未配置 base_url（请在 Family 供应商中填写）")
 	}
 	raw, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
-	if err != nil {
-		return Usage{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Accept", "text/event-stream")
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-	resp, err := httpClient.Do(req)
+	resp, err := doWithRetry(ctx, func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		req.Header.Set("Accept", "text/event-stream")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		return httpClient.Do(req)
+	})
 	if err != nil {
 		return Usage{}, HumanizeError(err)
 	}

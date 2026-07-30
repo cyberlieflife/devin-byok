@@ -189,8 +189,8 @@ func chatUsesLocalBYOKModel(plain []byte, modelIDs []string) bool {
 	return false
 }
 
-
 // looksLikeOfficialModelEnum 请求是否携带 Codeium 官方模型枚举名。
+// 注意：仅当未显式提供 ModelUID 时才做此启发式补全，避免在常规 payload 中误触发。
 func looksLikeOfficialModelEnum(plain []byte) bool {
 	raw := string(plain)
 	keys := []string{
