@@ -154,4 +154,55 @@ func TestBuildGetChatMessageToolFinalStopReason(t *testing.T) {
 	}
 }
 
+func TestEmitToolCallsSmartRunCommandSkipsIncompleteDelta(t *testing.T) {
+	views := []openaiToolCallView{
+		{ID: "call_rc_1", Name: "run_command", Arguments: `{"CommandLine":"dir"}`},
+	}
+	var frames [][]byte
+	writeFrame := func(b []byte) bool {
+		frames = append(frames, b)
+		return true
+	}
+	writeDelta := func(text, thinking string, inProgress bool) bool {
+		return true
+	}
+
+	emitToolCallsSmart(writeFrame, writeDelta, "mid-test", views)
+
+	if len(frames) == 0 {
+		t.Fatalf("expected frames written")
+	}
+
+	// 最终一帧必须为带 stopReasonFunctionCall 的 final 帧
+	lastFrame := frames[len(frames)-1]
+	fields := pbwire.ParseFields(lastFrame)
+	foundStopFunc := false
+	for _, f := range fields {
+		if f.Number == 5 && f.Wire == 0 && int(f.Varint) == stopReasonFunctionCall {
+			foundStopFunc = true
+		}
+	}
+	if !foundStopFunc {
+		t.Fatalf("last frame must be stopReasonFunctionCall")
+	}
+
+	// 检查是否有带 stopReasonIncomplete 且带 tool_calls (field 6) 的预览帧
+	for _, frame := range frames[:len(frames)-1] {
+		fFields := pbwire.ParseFields(frame)
+		hasToolField := false
+		hasIncomplete := false
+		for _, f := range fFields {
+			if f.Number == 6 && f.Wire == 2 {
+				hasToolField = true
+			}
+			if f.Number == 5 && f.Wire == 0 && int(f.Varint) == stopReasonIncomplete {
+				hasIncomplete = true
+			}
+		}
+		if hasToolField && hasIncomplete {
+			t.Fatalf("run_command should not emit incomplete tool preview frame")
+		}
+	}
+}
+
 

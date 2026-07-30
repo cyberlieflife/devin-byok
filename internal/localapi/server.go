@@ -900,6 +900,9 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		if len(result.toolCalls) > 0 && cfg.Features.EnableCascadeTools {
 			views := toolCallViews(valid)
 			if len(views) > 0 {
+				if text != "" {
+					_ = writeDelta(text, "", true)
+				}
 				emitToolCallsSmart(writeFrame, writeDelta, msgID, views)
 				logx.Infof("chat-like tool_calls=%d names=%v", len(views), toolNames(views))
 			} else if warn != "" {
@@ -915,6 +918,9 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		if len(result.toolCalls) > 0 && cfg.Features.EnableCascadeTools {
 			views := toolCallViews(valid)
 			if len(views) > 0 {
+				if text != "" {
+					_ = writeDelta(text, "", true)
+				}
 				emitToolCallsSmart(writeFrame, writeDelta, msgID, views)
 				logx.Infof("chat-like stream tool_calls=%d names=%v", len(views), toolNames(views))
 			} else if warn != "" {
@@ -1011,9 +1017,25 @@ func hasHeavyCascadeTools(views []openaiToolCallView) bool {
 	return false
 }
 
+// isRunCommandTool 判断是否为 run_command
+func isRunCommandTool(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return strings.Contains(n, "run_command")
+}
+
+func hasRunCommandTool(views []openaiToolCallView) bool {
+	for _, v := range views {
+		if isRunCommandTool(v.Name) {
+			return true
+		}
+	}
+	return false
+}
+
 // emitToolCallsSmart 仅在参数已完整校验后调用。
 // 禁止分片/累计中间帧：Devin 会对 delta_tool_calls 的 arguments 做追加或过早执行，导致 TargetFile 丢失与截停。
 // 策略：轻量 incomplete 保活 →（可选）一帧完整 incomplete tool delta → FUNCTION_CALL 终帧。
+// 对 run_command 特殊处理：跳过 incomplete tool delta 预览帧，直接下发带有 stopReasonFunctionCall 的终帧，防止 UI 卡片先空展开。
 func emitToolCallsSmart(writeFrame func([]byte) bool, writeDelta func(text, thinking string, inProgress bool) bool, msgID string, views []openaiToolCallView) {
 	if len(views) == 0 {
 		return
@@ -1024,9 +1046,11 @@ func emitToolCallsSmart(writeFrame func([]byte) bool, writeDelta func(text, thin
 			_ = writeFrame(buildGetChatMessageDelta(msgID, "", "", true))
 			time.Sleep(40 * time.Millisecond)
 		}
-		// 完整合法 JSON 的 incomplete 预览帧（非分片），再 final
-		_ = writeFrame(buildGetChatMessageToolDelta(msgID, views))
-		time.Sleep(40 * time.Millisecond)
+		// 对于 run_command，直接发送 final 帧，避免下发 incomplete tool delta
+		if !hasRunCommandTool(views) {
+			_ = writeFrame(buildGetChatMessageToolDelta(msgID, views))
+			time.Sleep(40 * time.Millisecond)
+		}
 	}
 	_ = writeFrame(buildGetChatMessageToolFinal(msgID, views))
 }
