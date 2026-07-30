@@ -205,6 +205,28 @@ func validateToolCallsEx(calls []openai.ToolCall, workspaceRoots []string) (ok [
 	return ok, ""
 }
 
+// isWorkspacePathError 判断报错是否属于“工具调用全部无效: ...不在当前工作区...内”
+func isWorkspacePathError(errText string) bool {
+	if !strings.HasPrefix(errText, "工具调用全部无效:") {
+		return false
+	}
+	return strings.Contains(errText, "不在当前工作区") || strings.Contains(errText, "不在当前工作区（")
+}
+
+// buildWorkspacePathRetryPrompt 构建工作区外路径错误的重试反思提示词
+func buildWorkspacePathRetryPrompt(errText string, retryCount int) string {
+	return fmt.Sprintf(`【系统自动纠错通知 - 第 %d 次重试】
+您刚刚发起的工具调用遭遇系统拦截并失败。
+
+1. 犯错内容：%s
+2. 犯错原因：检索类工具（如 grep_search、code_search、find_by_name 等）受 IDE 工作区限制，无法跨工作区检索外层或其它目录。
+3. 修正方案（请严格遵照以下两条之一纠正）：
+   - 方案 A（推荐）：如果需要检索工作区内代码，请将路径修改为当前工作区内的有效路径；
+   - 方案 B：如果确实需要搜索/读取工作区外目录，请禁止使用搜索工具，改为使用 run_command 工具通过命令行（如 rg、dir、findstr 等）进行操作。
+
+请根据以上提示，重新修正并给出有效的工具调用或回答。`, retryCount, errText)
+}
+
 func extractToolPath(toolName string, args any) string {
 	m, ok := args.(map[string]any)
 	if !ok {

@@ -691,9 +691,6 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		timeoutSec = cfg.ResolveChatTimeoutSec(len(chatOpt.Tools) > 0)
 		chatOpt.HTTPTimeout = time.Duration(timeoutSec) * time.Second
 	}
-	timeout := time.Duration(timeoutSec) * time.Second
-	upCtx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
 
 	w.Header().Set("Content-Type", "application/connect+proto")
 	w.Header().Set("Connect-Protocol-Version", "1")
@@ -725,7 +722,6 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	// 首帧 incomplete，防止客户端过早取消
 	if !keepAlive() {
 		logx.Warnf("chat-like client gone on first keepalive")
-		cancel()
 		return
 	}
 
@@ -736,122 +732,159 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		usage     openai.Usage
 		err       error
 	}
-	done := make(chan chatResult, 1)
 
-	if cfg.Features.EnableStream {
-		go func() {
-			defer func() {
-				if rec := recover(); rec != nil {
-					done <- chatResult{err: fmt.Errorf("stream panic: %v", rec)}
-				}
-			}()
-			metricsAddLog("info", "upstream streaming...")
-			var content strings.Builder
-			var thinking strings.Builder
-			var tools []openai.ToolCall
-			first := true
-			usage, err := s.chatStream(upCtx, prov, model, msgs, chatOpt, func(d openai.StreamDelta) error {
-				if first {
-					first = false
-					metricsAddLog("info", "upstream first token")
-				}
-				if d.Thinking != "" {
-					thinking.WriteString(d.Thinking)
-					if !writeDelta("", d.Thinking, true) {
-						return context.Canceled
-					}
-				}
-				if d.Content != "" {
-					content.WriteString(d.Content)
-					if !writeDelta(d.Content, "", true) {
-						return context.Canceled
-					}
-				}
-				// 只合并上游 tool delta，不在生成中途向 Devin 推工具参数。
-				// 中途推累计/分片 JSON 会导致客户端追加错乱或过早执行，出现 TargetFile 丢失与截停。
-				if len(d.ToolCalls) > 0 && cfg.Features.EnableCascadeTools {
-					tools = openai.MergeToolCallDeltas(tools, d.ToolCalls)
-				}
-				return nil
-			})
-			done <- chatResult{text: content.String(), thinking: thinking.String(), toolCalls: tools, usage: usage, err: err}
-		}()
-	} else {
-		go func() {
-			defer func() {
-				if rec := recover(); rec != nil {
-					done <- chatResult{err: fmt.Errorf("chat panic: %v", rec)}
-				}
-			}()
-			metricsAddLog("info", "upstream non-stream request...")
-			res, err := s.chatOnce(upCtx, prov, model, msgs, chatOpt)
-			done <- chatResult{text: res.Content, thinking: res.Thinking, toolCalls: res.ToolCalls, usage: res.Usage, err: err}
-		}()
-	}
-
-	keepEvery := 700 * time.Millisecond
-	if len(chatOpt.Tools) > 0 {
-		keepEvery = 300 * time.Millisecond // 工具场景更勤保活，降低 Devin 端超时
-	}
-	ticker := time.NewTicker(keepEvery)
-	defer ticker.Stop()
-	keepCount := 0
+	// 自动重试循环（处理区外路径工具调用报错，最多重试 5 次）
+	var valid []openai.ToolCall
+	var warn string
 	var result chatResult
-	waiting := true
-	for waiting {
-		select {
-		case result = <-done:
-			waiting = false
-		case <-ticker.C:
-			keepCount++
-			// 工具等待时定期发 incomplete 心跳（假流式保活）
-			ok := keepAlive()
-			if ok && len(chatOpt.Tools) > 0 && keepCount%4 == 0 {
-				// 轻量 thinking 心跳，避免客户端以为连接僵死
-				ok = writeDelta("", "​", true)
-			}
-			if !ok {
-				logx.Warnf("chat-like client disconnected during wait")
-				cancel()
-				return
-			}
-		case <-r.Context().Done():
-			logx.Warnf("chat-like client context done while waiting")
+	const maxWorkspacePathRetries = 5
+
+	for retry := 0; retry <= maxWorkspacePathRetries; retry++ {
+		done := make(chan chatResult, 1)
+		upCtx, cancel := context.WithTimeout(r.Context(), time.Duration(timeoutSec)*time.Second)
+
+		if cfg.Features.EnableStream {
+			go func() {
+				defer func() {
+					if rec := recover(); rec != nil {
+						done <- chatResult{err: fmt.Errorf("stream panic: %v", rec)}
+					}
+				}()
+				metricsAddLog("info", fmt.Sprintf("upstream streaming (attempt %d)...", retry+1))
+				var content strings.Builder
+				var thinking strings.Builder
+				var tools []openai.ToolCall
+				first := true
+				usage, err := s.chatStream(upCtx, prov, model, msgs, chatOpt, func(d openai.StreamDelta) error {
+					if first {
+						first = false
+						metricsAddLog("info", "upstream first token")
+					}
+					if d.Thinking != "" {
+						thinking.WriteString(d.Thinking)
+						if !writeDelta("", d.Thinking, true) {
+							return context.Canceled
+						}
+					}
+					if d.Content != "" {
+						content.WriteString(d.Content)
+						if !writeDelta(d.Content, "", true) {
+							return context.Canceled
+						}
+					}
+					// 只合并上游 tool delta，不在生成中途向 Devin 推工具参数。
+					// 中途推累计/分片 JSON 会导致客户端追加错乱或过早执行，出现 TargetFile 丢失与截停。
+					if len(d.ToolCalls) > 0 && cfg.Features.EnableCascadeTools {
+						tools = openai.MergeToolCallDeltas(tools, d.ToolCalls)
+					}
+					return nil
+				})
+				done <- chatResult{text: content.String(), thinking: thinking.String(), toolCalls: tools, usage: usage, err: err}
+			}()
+		} else {
+			go func() {
+				defer func() {
+					if rec := recover(); rec != nil {
+						done <- chatResult{err: fmt.Errorf("chat panic: %v", rec)}
+					}
+				}()
+				metricsAddLog("info", fmt.Sprintf("upstream non-stream request (attempt %d)...", retry+1))
+				res, err := s.chatOnce(upCtx, prov, model, msgs, chatOpt)
+				done <- chatResult{text: res.Content, thinking: res.Thinking, toolCalls: res.ToolCalls, usage: res.Usage, err: err}
+			}()
+		}
+
+		keepEvery := 700 * time.Millisecond
+		if len(chatOpt.Tools) > 0 {
+			keepEvery = 300 * time.Millisecond // 工具场景更勤保活，降低 Devin 端超时
+		}
+		ticker := time.NewTicker(keepEvery)
+		keepCount := 0
+		waiting := true
+		for waiting {
 			select {
 			case result = <-done:
 				waiting = false
-			default:
-				cancel()
-				_ = writeDelta("BYOK: client canceled before upstream finished", "", false)
-				_, _ = w.Write(pbwire.ConnectEndStream())
-				if flusher != nil {
-					flusher.Flush()
+			case <-ticker.C:
+				keepCount++
+				// 工具等待时定期发 incomplete 心跳（假流式保活）
+				ok := keepAlive()
+				if ok && len(chatOpt.Tools) > 0 && keepCount%4 == 0 {
+					// 轻量 thinking 心跳，避免客户端以为连接僵死
+					ok = writeDelta("", "​", true)
 				}
-				return
+				if !ok {
+					ticker.Stop()
+					cancel()
+					logx.Warnf("chat-like client disconnected during wait")
+					return
+				}
+			case <-r.Context().Done():
+				ticker.Stop()
+				logx.Warnf("chat-like client context done while waiting")
+				select {
+				case result = <-done:
+					waiting = false
+				default:
+					cancel()
+					_ = writeDelta("BYOK: client canceled before upstream finished", "", false)
+					_, _ = w.Write(pbwire.ConnectEndStream())
+					if flusher != nil {
+						flusher.Flush()
+					}
+					return
+				}
 			}
 		}
-	}
+		ticker.Stop()
+		cancel()
 
-	if result.err != nil {
-		logx.Errorf("upstream chat: %v", result.err)
-		metricsReqFail(uiModel)
-		if isCommitGenerationPending() {
-			metricsFeatureFail("commit", uiModel)
-			clearCommitGenerationPending()
-			metricsAddLog("error", "commit fail model="+uiModel+" err="+result.err.Error())
+		if result.err != nil {
+			logx.Errorf("upstream chat: %v", result.err)
+			metricsReqFail(uiModel)
+			if isCommitGenerationPending() {
+				metricsFeatureFail("commit", uiModel)
+				clearCommitGenerationPending()
+				metricsAddLog("error", "commit fail model="+uiModel+" err="+result.err.Error())
+			}
+			if fastCtx {
+				metricsFeatureFail("fast_context", uiModel)
+				clearFastContextPending()
+				metricsAddLog("error", "fast-context fail model="+uiModel+" err="+result.err.Error())
+			}
+			metricsAddLog("error", "upstream fail: "+result.err.Error())
+			_ = writeFrame(buildGetChatMessageErrorDelta(msgID, humanizeChatError(result.err)))
+			_, _ = w.Write(pbwire.ConnectEndStream())
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return
 		}
-		if fastCtx {
-			metricsFeatureFail("fast_context", uiModel)
-			clearFastContextPending()
-			metricsAddLog("error", "fast-context fail model="+uiModel+" err="+result.err.Error())
+
+		if len(result.toolCalls) > 0 && cfg.Features.EnableCascadeTools {
+			valid, warn = validateToolCallsEx(result.toolCalls, workspaceRoots)
+			if warn != "" {
+				logx.Warnf("tool validate (attempt %d): %s", retry+1, warn)
+			}
+
+			// 如果所有工具调用均因区外路径被拦截，且重试次数未用尽，注入反思 Prompt 重新向模型发起请求
+			if len(valid) == 0 && isWorkspacePathError(warn) && retry < maxWorkspacePathRetries {
+				reflection := buildWorkspacePathRetryPrompt(warn, retry+1)
+				logx.Warnf("workspace path error detected, retrying (%d/%d) with reflection prompt", retry+1, maxWorkspacePathRetries)
+				metricsAddLog("warn", fmt.Sprintf("workspace path retry %d/%d: %s", retry+1, maxWorkspacePathRetries, warn))
+
+				msgs = append(msgs, openai.ChatMessage{
+					Role:      "assistant",
+					Content:   result.text,
+					ToolCalls: result.toolCalls,
+				}, openai.ChatMessage{
+					Role:    "user",
+					Content: reflection,
+				})
+				continue
+			}
 		}
-		metricsAddLog("error", "upstream fail: "+result.err.Error())
-		_ = writeFrame(buildGetChatMessageErrorDelta(msgID, humanizeChatError(result.err)))
-		_, _ = w.Write(pbwire.ConnectEndStream())
-		if flusher != nil {
-			flusher.Flush()
-		}
-		return
+		break
 	}
 
 	text := strings.TrimSpace(result.text)
@@ -865,10 +898,6 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 			_ = writeDelta("", thinking, true)
 		}
 		if len(result.toolCalls) > 0 && cfg.Features.EnableCascadeTools {
-			valid, warn := validateToolCallsEx(result.toolCalls, workspaceRoots)
-			if warn != "" {
-				logx.Warnf("tool validate: %s", warn)
-			}
 			views := toolCallViews(valid)
 			if len(views) > 0 {
 				emitToolCallsSmart(writeFrame, writeDelta, msgID, views)
@@ -884,10 +913,6 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	} else {
 		// …/… FUNCTION_CALL
 		if len(result.toolCalls) > 0 && cfg.Features.EnableCascadeTools {
-			valid, warn := validateToolCallsEx(result.toolCalls, workspaceRoots)
-			if warn != "" {
-				logx.Warnf("tool validate: %s", warn)
-			}
 			views := toolCallViews(valid)
 			if len(views) > 0 {
 				emitToolCallsSmart(writeFrame, writeDelta, msgID, views)

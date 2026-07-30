@@ -100,6 +100,18 @@ func TestHumanizeWorkspaceSearchError(t *testing.T) {
 	}
 }
 
+func TestWorkspacePathRetryPrompt(t *testing.T) {
+	errText := "工具调用全部无效: grep_search 路径 D:\\Devin-byok 不在当前工作区（D:\\Code\\DevinTest）内；请改用工作区内路径，或对区外目录使用 run_command。"
+	if !isWorkspacePathError(errText) {
+		t.Fatalf("expected isWorkspacePathError=true for %s", errText)
+	}
+
+	prompt := buildWorkspacePathRetryPrompt(errText, 1)
+	if !strings.Contains(prompt, "第 1 次重试") || !strings.Contains(prompt, "犯错内容") || !strings.Contains(prompt, "run_command") {
+		t.Fatalf("unexpected prompt format: %s", prompt)
+	}
+}
+
 type errString string
 
 func (e errString) Error() string { return string(e) }
