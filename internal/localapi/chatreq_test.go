@@ -205,4 +205,12 @@ func TestEmitToolCallsSmartRunCommandSkipsIncompleteDelta(t *testing.T) {
 	}
 }
 
+func TestTitleGenerationDetection(t *testing.T) {
+	plain := []byte("Generate a title for this conversation concisely")
+	parsed := parseGetChatMessageRequest(plain)
+	if !isTitleGenerationChat(parsed, "generate title", plain) {
+		t.Fatal("expected title generation detection")
+	}
+}
+
 

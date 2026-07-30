@@ -432,6 +432,7 @@ function fillFeatureModelSelects(models, cfg){
     ['codemap_fast_model', (cfg&& (cfg.codemap_fast_model||cfg.codemap_fast_model_resolved||cfg.codemap_model)) || def, 'codemap_fast_hint', (cfg&&cfg.codemap_fast_model_resolved)||def],
     ['codemap_smart_model', (cfg&& (cfg.codemap_smart_model||cfg.codemap_smart_model_resolved||cfg.codemap_model)) || def, 'codemap_smart_hint', (cfg&&cfg.codemap_smart_model_resolved)||def],
     ['command_model', (cfg&& (cfg.command_model||cfg.command_model_resolved)) || def, 'command_hint', (cfg&&cfg.command_model_resolved)||def],
+    ['title_model', (cfg&& (cfg.title_model||cfg.title_model_resolved)) || def, 'title_hint', (cfg&&cfg.title_model_resolved)||def],
     ['fast_context_model', (cfg&& (cfg.fast_context_model||cfg.fast_context_model_resolved)) || def, 'fast_context_hint', (cfg&&cfg.fast_context_model_resolved)||def],
   ];
   // 兼容旧页面可能仍有 codemap_model 单选
@@ -451,6 +452,7 @@ async function saveFeatureModels(){
     codemap_fast_model: val('codemap_fast_model'),
     codemap_smart_model: val('codemap_smart_model'),
     command_model: val('command_model'),
+    title_model: val('title_model'),
     fast_context_model: val('fast_context_model'),
     // 兼容：旧 codemap_model 同步为 smart
     codemap_model: val('codemap_smart_model') || val('codemap_model'),

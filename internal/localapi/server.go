@@ -411,6 +411,28 @@ func clearFastContextPending() {
 	fastContextPendingUntil.Store(0)
 }
 
+// isTitleGenerationChat 识别会话标题生成请求。
+func isTitleGenerationChat(parsed parsedChatRequest, userText string, plain []byte) bool {
+	blob := strings.ToLower(parsed.SystemPrompt + "\n" + userText)
+	keys := []string{
+		"conversation title", "title generator", "generate a title",
+		"concise title", "summarize the conversation", "generate title",
+		"output only the title", "title of the conversation",
+	}
+	for _, k := range keys {
+		if strings.Contains(blob, k) {
+			return true
+		}
+	}
+	low := strings.ToLower(string(plain))
+	for _, k := range []string{"conversation title", "title generator", "generate a title", "concise title"} {
+		if strings.Contains(low, k) {
+			return true
+		}
+	}
+	return false
+}
+
 // isFastContextChat 识别 Fast Context / Instant Context / find_code_context 相关请求。
 func isFastContextChat(parsed parsedChatRequest, userText string, plain []byte) bool {
 	if isFastContextPending() {
@@ -531,6 +553,22 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		}
 	}
 
+	// Title 模型绑定与语言提示词处理
+	isTitleReq := isTitleGenerationChat(parsed, userText, plain)
+	if isTitleReq && !hasExplicitModel {
+		if tm := cfg.FeatureModelID("title"); tm != "" {
+			if m, ok := cfg.ResolveModelUID(tm); ok {
+				uiModel = m.ID
+			} else if m, ok := cfg.FindModel(tm); ok {
+				uiModel = m.ID
+			} else {
+				uiModel = tm
+			}
+		}
+		metricsAddLog("info", "title-generation model="+uiModel)
+		logx.Infof("title-generation model=%s", uiModel)
+	}
+
 	// Commit 模型绑定：仅在生成 Commit 消息窗口且未显式强行指定其他有效模型时使用 command_model
 	isCommitPending := isCommitGenerationPending()
 	if isCommitPending {
@@ -638,6 +676,9 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	}
 	if fastCtx {
 		msgs = injectFastContextAgentHint(msgs)
+	}
+	if isTitleReq {
+		msgs = injectSystemNote(msgs, "按照用户的语言生成对应语言的标题", "对应语言的标题")
 	}
 	// 系统提示词（含固定 write/edit 提示）始终注入
 	msgs = promptstore.ApplyToMessages(msgs)

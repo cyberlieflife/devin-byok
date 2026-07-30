@@ -123,6 +123,8 @@ type FeaturesConfig struct {
 	CommandModel string `yaml:"command_model"`
 	// EnableFastContext Fast Context（find_code_context / Instant Context）支持
 	EnableFastContext bool `yaml:"enable_fast_context"`
+	// TitleModel 会话标题生成所用模型（models[].id）
+	TitleModel string `yaml:"title_model"`
 	// FastContextModel Fast Context 子代理/检索规划所用模型（models[].id）
 	FastContextModel string `yaml:"fast_context_model"`
 }
@@ -220,6 +222,7 @@ type GUIPatch struct {
 	CodeMapFastModel     *string `json:"codemap_fast_model"`
 	CodeMapSmartModel    *string `json:"codemap_smart_model"`
 	CommandModel         *string `json:"command_model"`
+	TitleModel           *string `json:"title_model"`
 	FastContextModel     *string `json:"fast_context_model"`
 	EnableFastContext    *bool   `json:"enable_fast_context"`
 	UpdateEnabled        *bool   `json:"update_enabled"`
@@ -276,6 +279,15 @@ func (f *File) ApplyGUIPatch(p GUIPatch) {
 	}
 	if p.CodeMapSmartModel != nil {
 		f.Features.CodeMapSmartModel = strings.TrimSpace(*p.CodeMapSmartModel)
+	}
+	if p.CommandModel != nil {
+		f.Features.CommandModel = strings.TrimSpace(*p.CommandModel)
+	}
+	if p.TitleModel != nil {
+		f.Features.TitleModel = strings.TrimSpace(*p.TitleModel)
+	}
+	if p.FastContextModel != nil {
+		f.Features.FastContextModel = strings.TrimSpace(*p.FastContextModel)
 	}
 	if p.UpdateEnabled != nil {
 		f.Update.Enabled = *p.UpdateEnabled
@@ -860,6 +872,8 @@ func (f *File) FeatureModelID(kind string) string {
 	switch k {
 	case "command", "commit", "commit_message", "git_commit":
 		candidates = append(candidates, f.Features.CommandModel)
+	case "title", "conversation_title", "title_generator", "generate_title":
+		candidates = append(candidates, f.Features.TitleModel)
 	case "fast_context", "fastcontext", "find_code_context", "instant_context":
 		candidates = append(candidates, f.Features.FastContextModel)
 	case "deepwiki", "wiki":
