@@ -42,6 +42,7 @@ func TestDevstralHTTPHandlerReturnsToolCall(t *testing.T) {
 	cfg.Features.PureLocal = true
 	cfg.Features.EnableStream = true
 	s := New(cfg, t.TempDir())
+	defer s.Close()
 
 	req := httptest.NewRequest(http.MethodPost, "/_route/api_server/exa.api_server_pb.ApiServerService/GetDevstralStream", bytes.NewReader(raw))
 	req.Header.Set("Content-Type", "application/connect+proto")

@@ -267,7 +267,8 @@ func metricsAddLog(level, msg string) {
 		Time: time.Now().Format("15:04:05"), Level: level, Message: msg,
 	})
 	if len(runtimeStats.logs) > 300 {
-		runtimeStats.logs = runtimeStats.logs[len(runtimeStats.logs)-300:]
+		n := copy(runtimeStats.logs, runtimeStats.logs[len(runtimeStats.logs)-300:])
+		runtimeStats.logs = runtimeStats.logs[:n]
 	}
 }
 

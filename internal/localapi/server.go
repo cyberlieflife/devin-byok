@@ -56,6 +56,21 @@ func New(cfg *config.File, captureDir string) *Server {
 	}
 }
 
+// Close 释放 Server 占用的底侧资源与句柄。
+func (s *Server) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.stopWatch:
+	default:
+		close(s.stopWatch)
+	}
+	if s.rpcRotator != nil {
+		return s.rpcRotator.Close()
+	}
+	return nil
+}
+
 // SetConfigPath 设置配置文件路径以启用热重载。
 func (s *Server) SetConfigPath(path string) {
 	s.mu.Lock()
