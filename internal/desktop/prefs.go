@@ -2,13 +2,13 @@
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"devin-byok/internal/platform"
 )
 
-// Prefs GUI/桌面相关偏好（存 APPDATA，不进 config.yaml）。
+// Prefs GUI 偏好（存平台数据目录，不进 config.yaml）。
 type Prefs struct {
 	// Autostart 开机自启 serve
 	Autostart bool `json:"autostart"`
@@ -19,7 +19,7 @@ type Prefs struct {
 }
 
 func prefsPath() string {
-	return filepath.Join(os.Getenv("APPDATA"), "devin-byok", "gui.json")
+	return filepath.Join(platform.DataDir(), "gui.json")
 }
 
 func DefaultPrefs() Prefs {
@@ -51,31 +51,4 @@ func SavePrefs(p Prefs) error {
 	}
 	b = append(b, '\n')
 	return os.WriteFile(prefsPath(), b, 0o644)
-}
-
-// AutostartPath 开机启动脚本路径。
-func AutostartPath() string {
-	return filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "devin-byok-serve.cmd")
-}
-
-func AutostartEnabled() bool {
-	_, err := os.Stat(AutostartPath())
-	return err == nil
-}
-
-// SetAutostart 写入/删除 Startup 脚本（启动 CLI start，会 apply）。
-func SetAutostart(on bool, projectDir, cliExe string) error {
-	lnk := AutostartPath()
-	if !on {
-		_ = os.Remove(lnk)
-		return nil
-	}
-	if strings.TrimSpace(cliExe) == "" {
-		return fmt.Errorf("cli exe empty")
-	}
-	if strings.TrimSpace(projectDir) == "" {
-		projectDir = filepath.Dir(cliExe)
-	}
-	content := fmt.Sprintf("@echo off\r\ncd /d \"%s\"\r\n\"%s\" start\r\n", projectDir, cliExe)
-	return os.WriteFile(lnk, []byte(content), 0o644)
 }

@@ -1,6 +1,7 @@
 ﻿package update
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,13 +10,13 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
+
+	"devin-byok/internal/platform"
 )
 
 // Config 在线更新配置。
@@ -212,54 +213,13 @@ func DownloadAndSchedule(ctx context.Context, cfg Config, current string, instal
 	if err := unzip(zipPath, extractDir); err != nil {
 		return ApplyResult{OK: false, Message: "unzip: " + err.Error()}, err
 	}
-	// PowerShell 应用脚本：等待旧进程释放文件锁 → 复制 → 启动新 GUI → 退出（不留黑窗）
-	script := filepath.Join(tmp, "apply-update.ps1")
-	srcPS := powershellSingleQuote(extractDir)
-	dstPS := powershellSingleQuote(installDir)
-	guiName := "devin-byok-gui.exe"
-	ps := strings.Join([]string{
-		"$ErrorActionPreference = 'Continue'",
-		"Write-Host '[devin-byok] waiting for old process to exit...'",
-		"$src = " + srcPS,
-		"$dst = " + dstPS,
-		"$gui = Join-Path $dst '" + guiName + "'",
-		"$srcGui = Join-Path $src '" + guiName + "'",
-		"if (-not (Test-Path -LiteralPath $srcGui)) { Write-Host '[devin-byok] ERROR: missing' $srcGui; exit 1 }",
-		"# 最多等 40s，直到目标 exe 可写（旧 GUI 已退出）",
-		"for ($i = 0; $i -lt 80; $i++) {",
-		"  try {",
-		"    if (Test-Path -LiteralPath $gui) {",
-		"      $fs = [System.IO.File]::Open($gui, 'Open', 'ReadWrite', 'None')",
-		"      $fs.Close()",
-		"    }",
-		"    break",
-		"  } catch {",
-		"    Start-Sleep -Milliseconds 500",
-		"  }",
-		"}",
-		"Write-Host '[devin-byok] applying update to' $dst",
-		"New-Item -ItemType Directory -Force -Path $dst | Out-Null",
-		"Copy-Item -LiteralPath $srcGui -Destination $gui -Force",
-		"if (Test-Path -LiteralPath (Join-Path $src 'START.txt')) { Copy-Item -LiteralPath (Join-Path $src 'START.txt') -Destination (Join-Path $dst 'START.txt') -Force }",
-		"if (Test-Path -LiteralPath (Join-Path $src 'config.example.yaml')) { Copy-Item -LiteralPath (Join-Path $src 'config.example.yaml') -Destination (Join-Path $dst 'config.example.yaml') -Force }",
-		"Write-Host '[devin-byok] update applied'",
-		"Start-Process -FilePath $gui -WorkingDirectory $dst",
-		"Write-Host '[devin-byok] done'",
-		"exit 0",
-	}, "\r\n") + "\r\n"
-	if err := os.WriteFile(script, []byte(ps), 0o755); err != nil {
-		setProgress("error", 0, 0, 0, err.Error())
-		return ApplyResult{OK: false, Message: err.Error()}, err
+
+	guiName := platform.GUIName()
+	if platform.IsWindows() {
+		guiName = "devin-byok-gui.exe"
 	}
-	// 隐藏窗口启动；/c 执行完自动结束，避免残留 cmd
-	cmd := exec.Command("powershell",
-		"-NoProfile", "-ExecutionPolicy", "Bypass",
-		"-WindowStyle", "Hidden",
-		"-File", script,
-	)
-	cmd.Dir = tmp
-	cmd.SysProcAttr = hiddenSysProcAttr()
-	if err := cmd.Start(); err != nil {
+	script, err := scheduleApply(extractDir, installDir, guiName, tmp)
+	if err != nil {
 		setProgress("error", 0, 0, 0, err.Error())
 		return ApplyResult{OK: false, Message: err.Error()}, err
 	}
@@ -304,12 +264,38 @@ func fileSHA256(path string) (string, error) {
 }
 
 func unzip(zipPath, dest string) error {
-	// 使用 PowerShell Expand-Archive，避免再引 archive/zip 依赖问题
-	cmd := exec.Command("powershell", "-NoProfile", "-Command",
-		fmt.Sprintf("Expand-Archive -LiteralPath '%s' -DestinationPath '%s' -Force", zipPath, dest))
-	out, err := cmd.CombinedOutput()
+	r, err := zip.OpenReader(zipPath)
 	if err != nil {
-		return fmt.Errorf("%v: %s", err, string(out))
+		return err
+	}
+	defer r.Close()
+	for _, f := range r.File {
+		target := filepath.Join(dest, f.Name)
+		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(dest)+string(os.PathSeparator)) {
+			return fmt.Errorf("illegal file path: %s", f.Name)
+		}
+		if f.FileInfo().IsDir() {
+			_ = os.MkdirAll(target, 0o755)
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, f.Mode())
+		if err != nil {
+			rc.Close()
+			return err
+		}
+		_, err = io.Copy(out, rc)
+		rc.Close()
+		out.Close()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -374,7 +360,6 @@ func DefaultInstallDir() string {
 
 // GOOS helper for tests
 func IsWindows() bool { return runtime.GOOS == "windows" }
-
 
 func buildChineseNotes(current, latest, body string) string {
 	var b strings.Builder
@@ -441,15 +426,4 @@ func downloadFileProgress(ctx context.Context, url, dest string) error {
 		setProgress("downloading", 90, pr.read, pr.total, "下载完成，准备校验…")
 	}
 	return err
-}
-
-
-func powershellSingleQuote(s string) string {
-	// PowerShell 单引号字符串：' -> ''
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
-}
-
-// hiddenSysProcAttr 隐藏子进程控制台窗口（Windows）。
-func hiddenSysProcAttr() *syscall.SysProcAttr {
-	return &syscall.SysProcAttr{HideWindow: true}
 }

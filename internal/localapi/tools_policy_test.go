@@ -38,7 +38,7 @@ func TestFilterToolsByPolicy(t *testing.T) {
 func TestValidateToolCallsJSON(t *testing.T) {
 	good := openai.ToolCall{ID: "1", Type: "function"}
 	good.Function.Name = "read_file"
-	good.Function.Arguments = `{"file_path":"D:\\\\a.go"}`
+	good.Function.Arguments = `{"file_path":"D:\\a.go"}`
 	bad := openai.ToolCall{ID: "2", Type: "function"}
 	bad.Function.Name = "write_to_file"
 	bad.Function.Arguments = `{"file_path":"x","content":"hel`
@@ -54,7 +54,7 @@ func TestValidateToolCallsJSON(t *testing.T) {
 func TestValidateGrepOutsideWorkspace(t *testing.T) {
 	tc := openai.ToolCall{ID: "g1", Type: "function"}
 	tc.Function.Name = "grep_search"
-	tc.Function.Arguments = `{"SearchPath":"D:\\\\Devin-byok","Query":"ToolsMode"}`
+	tc.Function.Arguments = `{"SearchPath":"D:\\Devin-byok","Query":"ToolsMode"}`
 	ok, errText := validateToolCallsEx([]openai.ToolCall{tc}, []string{`D:\Code\DevinTest`})
 	if len(ok) != 0 {
 		t.Fatalf("should reject outside workspace: %+v", ok)
@@ -63,7 +63,7 @@ func TestValidateGrepOutsideWorkspace(t *testing.T) {
 		t.Fatalf("want workspace error, got %s", errText)
 	}
 	// inside workspace ok
-	tc.Function.Arguments = `{"SearchPath":"D:\\\\Code\\\\DevinTest","Query":"ToolsMode"}`
+	tc.Function.Arguments = `{"SearchPath":"D:\\Code\\DevinTest","Query":"ToolsMode"}`
 	ok, errText = validateToolCallsEx([]openai.ToolCall{tc}, []string{`D:\Code\DevinTest`})
 	if len(ok) != 1 || errText != "" {
 		t.Fatalf("inside should pass ok=%+v err=%s", ok, errText)

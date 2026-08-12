@@ -5,21 +5,13 @@ import (
 	"path/filepath"
 
 	"devin-byok/internal/payload"
+	"devin-byok/internal/platform"
 )
 
-// DirName is the user data directory name managed by GUI.
 const DirName = ".devin-byok"
 
-// Dir returns data root: %USERPROFILE%\.devin-byok
-// Falls back to %APPDATA%\devin-byok when home is unavailable.
 func Dir() string {
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, DirName)
-	}
-	if app := os.Getenv("APPDATA"); app != "" {
-		return filepath.Join(app, "devin-byok")
-	}
-	return DirName
+	return platform.DataDir()
 }
 
 // EnsureDir creates the data directory.
@@ -97,9 +89,6 @@ func legacyConfigCandidates() []string {
 		out = append(out, filepath.Join(filepath.Dir(exe), "config.yaml"))
 	}
 	out = append(out, "config.yaml")
-	if app := os.Getenv("APPDATA"); app != "" {
-		out = append(out, filepath.Join(app, "devin-byok", "config.yaml"))
-	}
-	out = append(out, `D:\Devin-byok\config.yaml`)
+	out = append(out, filepath.Join(platform.DataDir(), "config.yaml"))
 	return out
 }

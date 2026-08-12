@@ -13,12 +13,14 @@ import (
 	"time"
 
 	"devin-byok/internal/config"
+	"devin-byok/internal/desktop"
 	"devin-byok/internal/devin"
 	"devin-byok/internal/localapi"
 	"devin-byok/internal/logx"
 	"devin-byok/internal/paths"
 	"devin-byok/internal/lsinstall"
 	"devin-byok/internal/extinstall"
+	"devin-byok/internal/platform"
 	"devin-byok/internal/update"
 	"devin-byok/internal/version"
 	"devin-byok/internal/upstream/openai"
@@ -87,14 +89,14 @@ func printHelp() {
   devin-byok start             后台启动 serve（写 PID，可配合开机自启）
   devin-byok stop              停止后台 serve
   devin-byok autostart on|off|status
-                               开机自启开关（Startup 快捷方式）
+                               开机自启开关
   devin-byok doctor|status     健康检查
   devin-byok test-upstream     测试上游
   devin-byok apply|restore     portalUrl 辅助
   devin-byok help
 
 推荐:
-  1) 在 GUI 或编辑 %USERPROFILE%\.devin-byok\config.yaml
+  1) 编辑配置文件 ` + paths.ConfigPath() + `
   2) devin-byok install
   3) devin-byok start
   4) devin-byok autostart on   # 可选
@@ -116,16 +118,13 @@ func projectRoot() string {
 			return dir
 		}
 	}
-	return `D:\Devin-byok`
+	return platform.DataDir()
 }
 
 func pidFile() string {
-	if appdata := os.Getenv("APPDATA"); appdata != "" {
-		dir := filepath.Join(appdata, "devin-byok")
-		_ = os.MkdirAll(dir, 0o755)
-		return filepath.Join(dir, "serve.pid")
-	}
-	return filepath.Join(projectRoot(), "serve.pid")
+	dir := platform.DataDir()
+	_ = os.MkdirAll(dir, 0o755)
+	return filepath.Join(dir, "serve.pid")
 }
 
 func mustServe(cfgPath string) {
@@ -226,7 +225,8 @@ func mustStopBackground() {
 	}
 	if b, err := os.ReadFile(pidFile()); err == nil {
 		pid := strings.TrimSpace(string(b))
-		_ = exec.Command("taskkill", "/F", "/PID", pid).Run()
+		killArgs := platform.KillCommand(pid)
+		_ = exec.Command(killArgs[0], killArgs[1:]...).Run()
 		_ = os.Remove(pidFile())
 	}
 	restoreOnStop()
@@ -234,23 +234,21 @@ func mustStopBackground() {
 }
 
 func mustAutostart(mode string) {
-	startup := filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup")
-	lnk := filepath.Join(startup, "devin-byok-serve.cmd")
+	exe, _ := os.Executable()
+	_ = desktop.SetAutostart(strings.ToLower(mode) == "on", projectRoot(), exe)
 	switch strings.ToLower(mode) {
 	case "on":
-		exe := filepath.Join(projectRoot(), "devin-byok.exe")
-		content := fmt.Sprintf("@echo off\r\ncd /d %s\r\n\"%s\" start\r\n", projectRoot(), exe)
-		if err := os.WriteFile(lnk, []byte(content), 0o644); err != nil {
-			logx.Errorf("autostart on: %v", err)
+		if desktop.AutostartEnabled() {
+			logx.Infof("autostart ON")
+		} else {
+			logx.Errorf("autostart on failed")
 			os.Exit(1)
 		}
-		logx.Infof("autostart ON -> %s", lnk)
 	case "off":
-		_ = os.Remove(lnk)
 		logx.Infof("autostart OFF")
 	case "status":
-		if _, err := os.Stat(lnk); err == nil {
-			logx.Infof("autostart: ON (%s)", lnk)
+		if desktop.AutostartEnabled() {
+			logx.Infof("autostart: ON")
 		} else {
 			logx.Infof("autostart: OFF")
 		}
@@ -382,7 +380,7 @@ func mustRestore() {
 
 func mustInstall() {
 	cfgPath := findConfig()
-	installDir := `D:\Devin`
+	installDir := platform.DefaultInstallDir()
 	if cfg, err := config.Load(cfgPath); err == nil && cfg.Devin.InstallDir != "" {
 		installDir = cfg.Devin.InstallDir
 	}
@@ -397,7 +395,7 @@ func mustInstall() {
 
 func mustUninstall() {
 	cfgPath := findConfig()
-	installDir := `D:\Devin`
+	installDir := platform.DefaultInstallDir()
 	if cfg, err := config.Load(cfgPath); err == nil && cfg.Devin.InstallDir != "" {
 		installDir = cfg.Devin.InstallDir
 	}
@@ -437,9 +435,9 @@ func mustStatus(cfgPath string) {
 			logx.Warnf("cascade_tools=true but tools.mode=off")
 		}
 	}
-	real := filepath.Join(`D:\Devin`, `resources`, `app`, `extensions`, `windsurf`, `bin`, `language_server_windows_x64.real.exe`)
+	real := filepath.Join(platform.DefaultInstallDir(), `resources`, `app`, `extensions`, `windsurf`, `bin`, platform.RealLanguageServerName())
 	if cfg2, err := config.Load(cfgPath); err == nil && cfg2.Devin.InstallDir != "" {
-		cand := filepath.Join(cfg2.Devin.InstallDir, `resources`, `app`, `extensions`, `windsurf`, `bin`, `language_server_windows_x64.real.exe`)
+		cand := filepath.Join(cfg2.Devin.InstallDir, `resources`, `app`, `extensions`, `windsurf`, `bin`, platform.RealLanguageServerName())
 		if _, err := os.Stat(cand); err == nil {
 			real = cand
 		}
@@ -447,7 +445,7 @@ func mustStatus(cfgPath string) {
 	if _, err := os.Stat(real); err == nil {
 		logx.Infof("wrapper: INSTALLED")
 	} else {
-		logx.Warnf("wrapper: NOT installed (missing language_server_windows_x64.real.exe)")
+		logx.Warnf("wrapper: NOT installed (missing %s)", platform.RealLanguageServerName())
 	}
 
 	host := "http://127.0.0.1:8787"
@@ -505,7 +503,7 @@ func mustStatus(cfgPath string) {
 	if b, err := os.ReadFile(pidFile()); err == nil {
 		logx.Infof("pid file: %s (%s)", pidFile(), strings.TrimSpace(string(b)))
 	}
-	startup := filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "devin-byok-serve.cmd")
+	startup := desktop.AutostartPath()
 	if _, err := os.Stat(startup); err == nil {
 		logx.Infof("autostart: ON")
 	} else {
@@ -529,8 +527,8 @@ func printToolChecklist() {
 		"  2) tools.mode=standard (full for shell)\n" +
 		"  3) devin-byok start + restart Devin\n\n" +
 		"Cases:\n" +
-		"  [ ] read D:\\\\Devin-byok\\\\README.md\n" +
-		"  [ ] list D:\\\\Devin-byok\n" +
+		"  [ ] read config.yaml\n" +
+		"  [ ] list workdir\n" +
 		"  [ ] search ToolsMode\n" +
 		"  [ ] write byok-p0-test.txt\n" +
 		"  [ ] edit append line\n" +
@@ -547,9 +545,9 @@ func printCaptureHint() {
 
 func mustGUI() {
 	root := projectRoot()
-	gui := filepath.Join(root, "devin-byok-gui.exe")
+	gui := filepath.Join(root, platform.GUIName())
 	if _, err := os.Stat(gui); err != nil {
-		logx.Errorf("missing %s - build: go build -ldflags=-H=windowsgui -o devin-byok-gui.exe ./cmd/devin-byok-gui", gui)
+		logx.Errorf("missing %s - build: go build -o %s ./cmd/devin-byok-gui", gui, gui)
 		os.Exit(1)
 	}
 	cmd := exec.Command(gui)

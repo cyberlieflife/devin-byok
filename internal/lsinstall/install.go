@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"devin-byok/internal/payload"
+	"devin-byok/internal/platform"
 )
 
 // Meta 安装元数据。
@@ -26,19 +27,19 @@ type Meta struct {
 }
 
 func metaPath() string {
-	return filepath.Join(os.Getenv("APPDATA"), "devin-byok", "ls-wrapper-install.json")
+	return filepath.Join(platform.DataDir(), "ls-wrapper-install.json")
 }
 
-// MaterializeWrapper 将内置 wrapper 释放到 %APPDATA%\devin-byok\bin\。
+// MaterializeWrapper 将内置 wrapper 释放到平台数据目录。
 func MaterializeWrapper() (string, error) {
 	if len(payload.LSWrapper) == 0 {
 		return "", fmt.Errorf("embedded ls-wrapper is empty")
 	}
-	dir := filepath.Join(os.Getenv("APPDATA"), "devin-byok", "bin")
+	dir := filepath.Join(platform.DataDir(), "bin")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	dst := filepath.Join(dir, "devin-byok-ls-wrapper.exe")
+	dst := filepath.Join(dir, platform.WrapperExeName())
 	// 内容变化才覆盖，避免无谓写盘
 	if b, err := os.ReadFile(dst); err == nil {
 		if sha256Hex(b) == sha256Hex(payload.LSWrapper) {
@@ -58,7 +59,7 @@ func BinDir(installDir string) string {
 
 // IsInstalled 是否已植入 wrapper（存在 .real）。
 func IsInstalled(installDir string) bool {
-	real := filepath.Join(BinDir(installDir), "language_server_windows_x64.real.exe")
+	real := filepath.Join(BinDir(installDir), platform.RealLanguageServerName())
 	_, err := os.Stat(real)
 	return err == nil
 }
@@ -66,11 +67,12 @@ func IsInstalled(installDir string) bool {
 // Install 将内置 wrapper 安装到 Devin language_server 路径。
 func Install(installDir string) (*Meta, error) {
 	if installDir == "" {
-		installDir = `D:\Devin`
+		installDir = platform.DefaultInstallDir()
 	}
 	bin := BinDir(installDir)
-	target := filepath.Join(bin, "language_server_windows_x64.exe")
-	real := filepath.Join(bin, "language_server_windows_x64.real.exe")
+	lsName := platform.LanguageServerName()
+	target := filepath.Join(bin, lsName)
+	real := filepath.Join(bin, platform.RealLanguageServerName())
 	if _, err := os.Stat(target); err != nil {
 		return nil, fmt.Errorf("missing language_server: %s", target)
 	}
@@ -87,7 +89,7 @@ func Install(installDir string) (*Meta, error) {
 	}
 
 	if !already {
-		bak := filepath.Join(bin, "language_server_windows_x64.exe.bak_"+ts)
+		bak := filepath.Join(bin, lsName+".bak_"+ts)
 		if err := copyFile(target, bak); err != nil {
 			return nil, fmt.Errorf("backup: %w", err)
 		}
@@ -101,7 +103,7 @@ func Install(installDir string) (*Meta, error) {
 			return nil, fmt.Errorf("rename to real: %w", err)
 		}
 	} else {
-		bak := filepath.Join(bin, "language_server_windows_x64.exe.wrapperbak_"+ts)
+		bak := filepath.Join(bin, lsName+".wrapperbak_"+ts)
 		if err := copyFile(target, bak); err == nil {
 			backups = append(backups, bak)
 		}
@@ -137,17 +139,18 @@ func InstallIfNeeded(installDir string) (*Meta, error) {
 // Uninstall 还原原始 language_server。
 func Uninstall(installDir string) error {
 	if installDir == "" {
-		installDir = `D:\Devin`
+		installDir = platform.DefaultInstallDir()
 	}
 	bin := BinDir(installDir)
-	target := filepath.Join(bin, "language_server_windows_x64.exe")
-	real := filepath.Join(bin, "language_server_windows_x64.real.exe")
+	lsName := platform.LanguageServerName()
+	target := filepath.Join(bin, lsName)
+	real := filepath.Join(bin, platform.RealLanguageServerName())
 	if _, err := os.Stat(real); err != nil {
 		return fmt.Errorf("real binary missing; nothing to uninstall")
 	}
 	ts := time.Now().Format("20060102_150405")
 	if _, err := os.Stat(target); err == nil {
-		bak := filepath.Join(bin, "language_server_windows_x64.exe.wrapper_before_restore_"+ts)
+		bak := filepath.Join(bin, lsName+".wrapper_before_restore_"+ts)
 		_ = copyFile(target, bak)
 		_ = os.Remove(target)
 	}

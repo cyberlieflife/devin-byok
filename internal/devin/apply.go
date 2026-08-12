@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"devin-byok/internal/platform"
 )
 
 // Paths 描述 Devin 用户数据路径。
@@ -17,15 +19,17 @@ type Paths struct {
 	StorageJSON  string
 }
 
-// ResolvePaths 解析当前用户的 Devin 数据路径。
 func ResolvePaths() (*Paths, error) {
-	appdata := os.Getenv("APPDATA")
-	if appdata == "" {
-		return nil, fmt.Errorf("APPDATA 未设置")
+	dataDirs := platform.DevinDataDirs()
+	var userData string
+	for _, d := range dataDirs {
+		if st, err := os.Stat(d); err == nil && st.IsDir() {
+			userData = d
+			break
+		}
 	}
-	userData := filepath.Join(appdata, "Devin")
-	if st, err := os.Stat(userData); err != nil || !st.IsDir() {
-		return nil, fmt.Errorf("未找到 Devin 用户目录: %s（请先启动过一次 Devin）", userData)
+	if userData == "" {
+		return nil, fmt.Errorf("未找到 Devin 用户目录（请先启动过一次 Devin）")
 	}
 	user := filepath.Join(userData, "User")
 	_ = os.MkdirAll(user, 0o755)
@@ -191,7 +195,7 @@ func ApplyPortal(portalBase string, settingKeys []string) (*ApplyResult, error) 
 		return nil, err
 	}
 
-	metaDir := filepath.Join(os.Getenv("APPDATA"), "devin-byok")
+	metaDir := platform.DataDir()
 	_ = os.MkdirAll(metaDir, 0o755)
 	meta := map[string]any{
 		"applied_at":     time.Now().Format(time.RFC3339),
@@ -221,7 +225,7 @@ func RestorePortal() (*RestoreResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	metaPath := filepath.Join(os.Getenv("APPDATA"), "devin-byok", "last-apply.json")
+	metaPath := filepath.Join(platform.DataDir(), "last-apply.json")
 	b, err := os.ReadFile(metaPath)
 	if err != nil {
 		return nil, fmt.Errorf("未找到 last-apply.json，无法自动恢复: %w", err)

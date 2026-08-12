@@ -6,7 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
+
+	"devin-byok/internal/platform"
 )
 
 // language_server 包装器：强制把 api/inference URL 指到本地兼容层。
@@ -17,7 +18,7 @@ func main() {
 		os.Exit(1)
 	}
 	dir := filepath.Dir(exe)
-	real := filepath.Join(dir, "language_server_windows_x64.real.exe")
+	real := filepath.Join(dir, platform.RealLanguageServerName())
 	if _, err := os.Stat(real); err != nil {
 		fmt.Fprintf(os.Stderr, "wrapper: missing real binary: %s\n", real)
 		os.Exit(1)
@@ -35,7 +36,7 @@ func main() {
 	args := rewriteArgs(os.Args[1:], api, inf)
 
 	// 记录启动参数，便于验证
-	logPath := filepath.Join(os.Getenv("APPDATA"), "devin-byok", "ls-wrapper-last.json")
+	logPath := filepath.Join(platform.DataDir(), "ls-wrapper-last.json")
 	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
 	_ = os.WriteFile(logPath, []byte(fmt.Sprintf(`{"real":%q,"api":%q,"inference":%q,"args":%q}`, real, api, inf, strings.Join(args, " "))), 0o644)
 
@@ -44,8 +45,6 @@ func main() {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
-	// Windows: 同控制台组
-	cmd.SysProcAttr = &syscall.SysProcAttr{}
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			os.Exit(ee.ExitCode())

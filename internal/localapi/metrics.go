@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"devin-byok/internal/platform"
 )
 
 // RuntimeMetrics 运行时监控指标。
@@ -90,12 +92,9 @@ var runtimeStats = &RuntimeMetrics{
 }
 
 func metricsPath() string {
-	if app := os.Getenv("APPDATA"); app != "" {
-		dir := filepath.Join(app, "devin-byok")
-		_ = os.MkdirAll(dir, 0o755)
-		return filepath.Join(dir, "metrics.json")
-	}
-	return filepath.Join("work", "metrics.json")
+	dir := platform.DataDir()
+	_ = os.MkdirAll(dir, 0o755)
+	return filepath.Join(dir, "metrics.json")
 }
 
 // MetricsLoad 启动时加载计数（不含日志）。

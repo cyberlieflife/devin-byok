@@ -45,7 +45,8 @@ upstream:
     max_tokens: 8192
 
 devin:
-  install_dir: "D:\\Devin"
+  # Windows: D:\\Devin       macOS: /Applications/Devin.app/Contents/Resources/app
+  install_dir: ""
   portal_url_keys:
     - "devin.portalUrl"
     - "windsurf.portalUrl"
@@ -79,5 +80,6 @@ cache:
 update:
   enabled: true
   repo: cyberlieflife/devin-byok
-  asset_contains: windows-amd64.zip
+  # 平台自动检测：windows-amd64.zip / darwin-arm64.zip / darwin-x64.zip
+  asset_contains: ""
   auto_apply: false

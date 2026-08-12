@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"devin-byok/internal/platform"
 	"gopkg.in/yaml.v3"
 )
 
@@ -335,7 +336,7 @@ func (f *File) applyDefaults() {
 		f.Upstream.TimeoutSec = 120
 	}
 	if f.Devin.InstallDir == "" {
-		f.Devin.InstallDir = `D:\Devin`
+		f.Devin.InstallDir = platform.DefaultInstallDir()
 	}
 	if len(f.Devin.PortalURLKeys) == 0 {
 		f.Devin.PortalURLKeys = []string{"devin.portalUrl", "windsurf.portalUrl"}
@@ -351,7 +352,7 @@ func (f *File) applyDefaults() {
 		f.Update.Repo = "cyberlieflife/devin-byok"
 	}
 	if f.Update.AssetContains == "" {
-		f.Update.AssetContains = "windows-amd64.zip"
+		f.Update.AssetContains = platform.AssetSuffix()
 	}
 	// update.enabled 默认 false；config.example 中建议 true
 	if f.Upstream.Thinking.Param == "" {

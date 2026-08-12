@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"devin-byok/internal/logx"
+	"devin-byok/internal/platform"
 )
 
 //go:embed byok-context-usage.js
@@ -30,7 +31,7 @@ func sessionsDir(installDir string) string {
 }
 
 func metaPath() string {
-	return filepath.Join(os.Getenv("APPDATA"), "devin-byok", metaFileName)
+	return filepath.Join(platform.DataDir(), metaFileName)
 }
 
 // ApplyContextUsageDonut 向 Devin sessions.html 注入悬停四色环脚本。
@@ -141,7 +142,7 @@ type injectMeta struct {
 }
 
 func writeMeta(installDir, htmlPath, jsPath string, fresh bool) error {
-	dir := filepath.Join(os.Getenv("APPDATA"), "devin-byok")
+	dir := platform.DataDir()
 	_ = os.MkdirAll(dir, 0o755)
 	b := []byte(fmt.Sprintf(
 		"{\n  \"install_dir\": %q,\n  \"html_path\": %q,\n  \"js_path\": %q,\n  \"applied_at\": %q,\n  \"fresh_html_inject\": %v\n}\n",
@@ -187,10 +188,7 @@ func jsonStringField(s, key string) string {
 }
 
 func detectInstallDir() string {
-	cands := []string{`D:\Devin`, `C:\Program Files\Devin`, `C:\Program Files (x86)\Devin`}
-	if v := os.Getenv("DEVIN_INSTALL_DIR"); v != "" {
-		cands = append([]string{v}, cands...)
-	}
+	cands := platform.DevinInstallCandidates()
 	for _, c := range cands {
 		if st, err := os.Stat(sessionsHTML(c)); err == nil && !st.IsDir() {
 			return c
