@@ -54,12 +54,7 @@ func devinInstallCandidates() []string {
 }
 
 func languageServerName() string {
-	switch runtime.GOARCH {
-	case "arm64":
-		return "language_server_darwin_arm64"
-	default:
-		return "language_server_darwin_x64"
-	}
+	return "language_server_macos_arm"
 }
 
 func wrapperExeName() string {
