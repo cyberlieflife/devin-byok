@@ -37,8 +37,8 @@ func devinInstallCandidates() []string {
 	var cands []string
 	home := UserHomeDir()
 	paths := []string{
-		"/Applications/Devin.app/Contents/Resources/app",
-		filepath.Join(home, "Applications", "Devin.app", "Contents", "Resources", "app"),
+		"/Applications/Devin.app",
+		filepath.Join(home, "Applications", "Devin.app"),
 	}
 	for _, p := range paths {
 		if st, err := os.Stat(p); err == nil && st.IsDir() {
@@ -79,8 +79,16 @@ func killCommand(pid string) []string {
 }
 
 func defaultInstallDir() string {
-	if st, err := os.Stat("/Applications/Devin.app/Contents/Resources/app"); err == nil && st.IsDir() {
-		return "/Applications/Devin.app/Contents/Resources/app"
+	if st, err := os.Stat("/Applications/Devin.app"); err == nil && st.IsDir() {
+		return "/Applications/Devin.app"
 	}
 	return ""
+}
+
+func extensionsBinSubPath() string {
+	return filepath.Join("Contents", "Resources", "app", "extensions", "windsurf", "bin")
+}
+
+func sessionsHTMLSubPath() string {
+	return filepath.Join("Contents", "Resources", "app", "out", "vs", "sessions", "electron-browser", "sessions.html")
 }

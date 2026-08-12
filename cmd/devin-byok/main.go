@@ -435,9 +435,9 @@ func mustStatus(cfgPath string) {
 			logx.Warnf("cascade_tools=true but tools.mode=off")
 		}
 	}
-	real := filepath.Join(platform.DefaultInstallDir(), `resources`, `app`, `extensions`, `windsurf`, `bin`, platform.RealLanguageServerName())
+	real := filepath.Join(platform.ExtensionsBinDir(platform.DefaultInstallDir()), platform.RealLanguageServerName())
 	if cfg2, err := config.Load(cfgPath); err == nil && cfg2.Devin.InstallDir != "" {
-		cand := filepath.Join(cfg2.Devin.InstallDir, `resources`, `app`, `extensions`, `windsurf`, `bin`, platform.RealLanguageServerName())
+		cand := filepath.Join(platform.ExtensionsBinDir(cfg2.Devin.InstallDir), platform.RealLanguageServerName())
 		if _, err := os.Stat(cand); err == nil {
 			real = cand
 		}

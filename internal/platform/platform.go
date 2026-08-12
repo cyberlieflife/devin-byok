@@ -61,9 +61,17 @@ func IsValidInstallDir(dir string) bool {
 	if dir == "" {
 		return false
 	}
-	lsPath := filepath.Join(dir, "resources", "app", "extensions", "windsurf", "bin", LanguageServerName())
-	realPath := filepath.Join(dir, "resources", "app", "extensions", "windsurf", "bin", RealLanguageServerName())
+	lsPath := filepath.Join(dir, extensionsBinSubPath(), LanguageServerName())
+	realPath := filepath.Join(dir, extensionsBinSubPath(), RealLanguageServerName())
 	_, lsErr := os.Stat(lsPath)
 	_, realErr := os.Stat(realPath)
 	return lsErr == nil || realErr == nil
+}
+
+func ExtensionsBinDir(installDir string) string {
+	return filepath.Join(installDir, extensionsBinSubPath())
+}
+
+func SessionsHTMLPath(installDir string) string {
+	return filepath.Join(installDir, sessionsHTMLSubPath())
 }

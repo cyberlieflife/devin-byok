@@ -54,7 +54,7 @@ func MaterializeWrapper() (string, error) {
 
 // BinDir 返回 Devin language_server 目录。
 func BinDir(installDir string) string {
-	return filepath.Join(installDir, "resources", "app", "extensions", "windsurf", "bin")
+	return platform.ExtensionsBinDir(installDir)
 }
 
 // IsInstalled 是否已植入 wrapper（存在 .real）。

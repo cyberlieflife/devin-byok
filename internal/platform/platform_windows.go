@@ -66,3 +66,11 @@ func killCommand(pid string) []string {
 func defaultInstallDir() string {
 	return `D:\Devin`
 }
+
+func extensionsBinSubPath() string {
+	return filepath.Join("resources", "app", "extensions", "windsurf", "bin")
+}
+
+func sessionsHTMLSubPath() string {
+	return filepath.Join("resources", "app", "out", "vs", "sessions", "electron-browser", "sessions.html")
+}

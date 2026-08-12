@@ -23,11 +23,11 @@ const (
 )
 
 func sessionsHTML(installDir string) string {
-	return filepath.Join(installDir, "resources", "app", "out", "vs", "sessions", "electron-browser", "sessions.html")
+	return platform.SessionsHTMLPath(installDir)
 }
 
 func sessionsDir(installDir string) string {
-	return filepath.Join(installDir, "resources", "app", "out", "vs", "sessions", "electron-browser")
+	return filepath.Dir(platform.SessionsHTMLPath(installDir))
 }
 
 func metaPath() string {
