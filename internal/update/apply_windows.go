@@ -3,7 +3,6 @@
 package update
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,6 +51,43 @@ func scheduleApply(extractDir, installDir, guiName, tmp string) (string, error) 
 		"-WindowStyle", "Hidden",
 		"-File", script,
 	)
+	cmd.Dir = tmp
+	cmd.SysProcAttr = hiddenSysProcAttr()
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	return script, nil
+}
+
+func scheduleApplyArtifact(artifactPath, installDir, guiName, tmp string) (string, error) {
+	script := filepath.Join(tmp, "apply-update.ps1")
+	artifactPS := powershellSingleQuote(artifactPath)
+	dstPS := powershellSingleQuote(installDir)
+	ps := strings.Join([]string{
+		"$ErrorActionPreference = 'Stop'",
+		"Write-Host '[devin-byok] waiting for old process to exit...'",
+		"$src = " + artifactPS,
+		"$dst = " + dstPS,
+		"$gui = Join-Path $dst '" + guiName + "'",
+		"for ($i = 0; $i -lt 80; $i++) {",
+		"  try {",
+		"    if (Test-Path -LiteralPath $gui) {",
+		"      $fs = [System.IO.File]::Open($gui, 'Open', 'ReadWrite', 'None')",
+		"      $fs.Close()",
+		"    }",
+		"    break",
+		"  } catch { Start-Sleep -Milliseconds 500 }",
+		"}",
+		"New-Item -ItemType Directory -Force -Path $dst | Out-Null",
+		"Copy-Item -LiteralPath $src -Destination $gui -Force",
+		"Unblock-File -LiteralPath $gui -ErrorAction SilentlyContinue",
+		"Write-Host '[devin-byok] update applied'",
+		"Start-Process -FilePath $gui -WorkingDirectory $dst",
+	}, "\r\n") + "\r\n"
+	if err := os.WriteFile(script, []byte(ps), 0o755); err != nil {
+		return "", err
+	}
+	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", script)
 	cmd.Dir = tmp
 	cmd.SysProcAttr = hiddenSysProcAttr()
 	if err := cmd.Start(); err != nil {

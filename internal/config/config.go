@@ -19,6 +19,7 @@ type File struct {
 	Update   UpdateConfig   `yaml:"update"`
 	Tools    ToolsConfig    `yaml:"tools"`
 	Cache    CacheConfig    `yaml:"cache"`
+	Quality  QualityConfig  `yaml:"quality" json:"quality"`
 }
 
 type ServerConfig struct {
@@ -31,6 +32,7 @@ type AuthConfig struct {
 	FakeAPIKey string `yaml:"fake_api_key"`
 	FakeEmail  string `yaml:"fake_email"`
 	FakeName   string `yaml:"fake_name"`
+	FakeUserID string `yaml:"fake_user_id"`
 }
 
 // ThinkingConfig 思考强度：上游参数 + Devin UI 映射。
@@ -56,29 +58,35 @@ type ThinkingConfig struct {
 // ModelEntry 可在 UI 中选择的模型。
 // Devin 用 model_uid(=ID) 区分；ID 必须唯一。
 type ModelEntry struct {
-	ID            string `yaml:"id" json:"id"`
-	Label         string `yaml:"label" json:"label"`
-	UpstreamModel string `yaml:"upstream_model" json:"upstream_model"`
-	Thinking      string `yaml:"thinking" json:"thinking"`
-	Family        string `yaml:"family" json:"family"`
-	FamilyUID     string `yaml:"family_uid" json:"family_uid"`
-	FamilyOrder   int    `yaml:"family_order" json:"family_order"`
-	ContextWindow int    `yaml:"context_window" json:"context_window"`
-	MaxTokens     int    `yaml:"max_tokens" json:"max_tokens"`
+	ID                   string `yaml:"id" json:"id"`
+	Label                string `yaml:"label" json:"label"`
+	UpstreamModel        string `yaml:"upstream_model" json:"upstream_model"`
+	Thinking             string `yaml:"thinking" json:"thinking"`
+	ThinkingType         string `yaml:"thinking_type,omitempty" json:"thinking_type,omitempty"`
+	ThinkingBudgetTokens int    `yaml:"thinking_budget_tokens,omitempty" json:"thinking_budget_tokens,omitempty"`
+	ThinkingParam        string `yaml:"thinking_param,omitempty" json:"thinking_param,omitempty"`
+	Family               string `yaml:"family" json:"family"`
+	FamilyUID            string `yaml:"family_uid" json:"family_uid"`
+	FamilyOrder          int    `yaml:"family_order" json:"family_order"`
+	ContextWindow        int    `yaml:"context_window" json:"context_window"`
+	MaxTokens            int    `yaml:"max_tokens" json:"max_tokens"`
 	// 模型级供应商（可覆盖 family；对齐 cursor-byok 每模型 baseURL/apiKey/modelID）
-	Provider string            `yaml:"provider" json:"provider"` // openai | anthropic
-	BaseURL  string            `yaml:"base_url" json:"base_url"`
-	APIKey   string            `yaml:"api_key" json:"api_key"`
-	Headers  map[string]string `yaml:"headers" json:"headers,omitempty"`
-	TimeoutSec int             `yaml:"timeout_sec" json:"timeout_sec,omitempty"`
+	Provider   string            `yaml:"provider" json:"provider"` // openai | anthropic
+	BaseURL    string            `yaml:"base_url" json:"base_url"`
+	APIKey     string            `yaml:"api_key" json:"api_key"`
+	Headers    map[string]string `yaml:"headers" json:"headers,omitempty"`
+	TimeoutSec int               `yaml:"timeout_sec" json:"timeout_sec,omitempty"`
 }
 
 // FamilyConfig 以 family 为单位的默认上下文/输出上限。
 type FamilyConfig struct {
-	UID           string `yaml:"uid" json:"uid"`
-	Label         string `yaml:"label" json:"label"`
-	ContextWindow int    `yaml:"context_window" json:"context_window"`
-	MaxTokens     int    `yaml:"max_tokens" json:"max_tokens"`
+	UID                  string `yaml:"uid" json:"uid"`
+	Label                string `yaml:"label" json:"label"`
+	ContextWindow        int    `yaml:"context_window" json:"context_window"`
+	MaxTokens            int    `yaml:"max_tokens" json:"max_tokens"`
+	ThinkingType         string `yaml:"thinking_type,omitempty" json:"thinking_type,omitempty"`
+	ThinkingBudgetTokens int    `yaml:"thinking_budget_tokens,omitempty" json:"thinking_budget_tokens,omitempty"`
+	ThinkingParam        string `yaml:"thinking_param,omitempty" json:"thinking_param,omitempty"`
 	// 供应商配置（family 内所有思考强度变体默认共用）
 	Provider      string            `yaml:"provider" json:"provider"` // openai | responses | anthropic
 	BaseURL       string            `yaml:"base_url" json:"base_url"`
@@ -93,7 +101,7 @@ type UpstreamConfig struct {
 	APIKey     string            `yaml:"api_key"`
 	Model      string            `yaml:"model"`
 	Models     []ModelEntry      `yaml:"models"`
-	Families   []FamilyConfig     `yaml:"families"`
+	Families   []FamilyConfig    `yaml:"families"`
 	TimeoutSec int               `yaml:"timeout_sec"`
 	Headers    map[string]string `yaml:"default_headers"`
 	Thinking   ThinkingConfig    `yaml:"thinking"`
@@ -139,8 +147,6 @@ type UpdateConfig struct {
 	CheckURL      string `yaml:"check_url" json:"check_url"`
 }
 
-
-
 // ToolsConfig Cascade 工具策略（mode/timeout/allow/deny）。
 // CacheConfig 本地响应/会话缓存。
 type CacheConfig struct {
@@ -172,6 +178,46 @@ type ToolsConfig struct {
 	Allow []string `yaml:"allow"`
 	// Deny 禁止的工具名（优先于 mode/allow）
 	Deny []string `yaml:"deny"`
+}
+
+// QualityConfig controls prompt depth and the verification contract. The
+// first implementation uses one request plus real tool/test evidence; it does
+// not silently invoke a second model or expose hidden reasoning.
+type QualityConfig struct {
+	Mode                  string `yaml:"mode" json:"mode"` // fast|balanced|verified
+	Enabled               bool   `yaml:"enabled" json:"enabled"`
+	MaxVerificationRounds int    `yaml:"max_verification_rounds" json:"max_verification_rounds"`
+	ReviewerModel         string `yaml:"reviewer_model" json:"reviewer_model"`
+	ReviewerEffort        string `yaml:"reviewer_effort" json:"reviewer_effort"`
+
+	// enabledSet distinguishes an omitted field (which must keep the legacy
+	// default) from an explicit "enabled: false" in YAML.
+	enabledSet bool
+}
+
+// UnmarshalYAML preserves whether quality.enabled was present. A plain bool
+// cannot distinguish a legacy config that omits the field from an explicit
+// request to disable quality prompts.
+func (q *QualityConfig) UnmarshalYAML(value *yaml.Node) error {
+	var raw struct {
+		Mode                  string `yaml:"mode"`
+		Enabled               *bool  `yaml:"enabled"`
+		MaxVerificationRounds int    `yaml:"max_verification_rounds"`
+		ReviewerModel         string `yaml:"reviewer_model"`
+		ReviewerEffort        string `yaml:"reviewer_effort"`
+	}
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	q.Mode = raw.Mode
+	q.MaxVerificationRounds = raw.MaxVerificationRounds
+	q.ReviewerModel = raw.ReviewerModel
+	q.ReviewerEffort = raw.ReviewerEffort
+	if raw.Enabled != nil {
+		q.Enabled = *raw.Enabled
+		q.enabledSet = true
+	}
+	return nil
 }
 
 // Load 读取 YAML 配置并填充默认值。
@@ -209,26 +255,29 @@ func Save(path string, f *File) error {
 
 // GUIPatch 管理页可改字段。
 type GUIPatch struct {
-	BaseURL              *string `json:"base_url"`
-	APIKey               *string `json:"api_key"`
-	Model                *string `json:"model"`
-	TimeoutSec           *int    `json:"timeout_sec"`
-	ToolsMode            *string `json:"tools_mode"`
-	ToolsTimeoutSec      *int    `json:"tools_timeout_sec"`
-	EnableStream         *bool   `json:"enable_stream"`
-	EnableCascadeTools   *bool   `json:"enable_cascade_tools"`
-	PureLocal            *bool   `json:"pure_local"`
-	DeepWikiModel        *string `json:"deepwiki_model"`
-	CodeMapModel         *string `json:"codemap_model"`
-	CodeMapFastModel     *string `json:"codemap_fast_model"`
-	CodeMapSmartModel    *string `json:"codemap_smart_model"`
-	CommandModel         *string `json:"command_model"`
-	TitleModel           *string `json:"title_model"`
-	FastContextModel     *string `json:"fast_context_model"`
-	EnableFastContext    *bool   `json:"enable_fast_context"`
-	UpdateEnabled        *bool   `json:"update_enabled"`
-	UpdateAutoApply      *bool   `json:"update_auto_apply"`
-	UpdateRepo           *string `json:"update_repo"`
+	BaseURL               *string `json:"base_url"`
+	APIKey                *string `json:"api_key"`
+	Model                 *string `json:"model"`
+	TimeoutSec            *int    `json:"timeout_sec"`
+	ToolsMode             *string `json:"tools_mode"`
+	ToolsTimeoutSec       *int    `json:"tools_timeout_sec"`
+	EnableStream          *bool   `json:"enable_stream"`
+	EnableCascadeTools    *bool   `json:"enable_cascade_tools"`
+	PureLocal             *bool   `json:"pure_local"`
+	DeepWikiModel         *string `json:"deepwiki_model"`
+	CodeMapModel          *string `json:"codemap_model"`
+	CodeMapFastModel      *string `json:"codemap_fast_model"`
+	CodeMapSmartModel     *string `json:"codemap_smart_model"`
+	CommandModel          *string `json:"command_model"`
+	TitleModel            *string `json:"title_model"`
+	FastContextModel      *string `json:"fast_context_model"`
+	EnableFastContext     *bool   `json:"enable_fast_context"`
+	UpdateEnabled         *bool   `json:"update_enabled"`
+	UpdateAutoApply       *bool   `json:"update_auto_apply"`
+	UpdateRepo            *string `json:"update_repo"`
+	QualityEnabled        *bool   `json:"quality_enabled"`
+	QualityMode           *string `json:"quality_mode"`
+	MaxVerificationRounds *int    `json:"max_verification_rounds"`
 }
 
 // ApplyGUIPatch 应用管理页补丁。
@@ -299,6 +348,16 @@ func (f *File) ApplyGUIPatch(p GUIPatch) {
 	if p.UpdateRepo != nil {
 		f.Update.Repo = strings.TrimSpace(*p.UpdateRepo)
 	}
+	if p.QualityEnabled != nil {
+		f.Quality.Enabled = *p.QualityEnabled
+		f.Quality.enabledSet = true
+	}
+	if p.QualityMode != nil {
+		f.Quality.Mode = strings.TrimSpace(*p.QualityMode)
+	}
+	if p.MaxVerificationRounds != nil && *p.MaxVerificationRounds > 0 {
+		f.Quality.MaxVerificationRounds = *p.MaxVerificationRounds
+	}
 }
 
 // MaskAPIKey 脱敏展示。
@@ -332,6 +391,9 @@ func (f *File) applyDefaults() {
 	if f.Auth.FakeName == "" {
 		f.Auth.FakeName = "BYOK Local"
 	}
+	if f.Auth.FakeUserID == "" {
+		f.Auth.FakeUserID = "byok-local-user"
+	}
 	if f.Upstream.TimeoutSec == 0 {
 		f.Upstream.TimeoutSec = 120
 	}
@@ -348,7 +410,7 @@ func (f *File) applyDefaults() {
 	// 产品策略：取消混合模式，仅单机 pure_local（含 Fast Context 本地）
 	f.Features.PureLocal = true
 	f.Features.EnableFastContext = true
-		if f.Update.Repo == "" {
+	if f.Update.Repo == "" {
 		f.Update.Repo = "cyberlieflife/devin-byok"
 	}
 	if f.Update.AssetContains == "" {
@@ -389,6 +451,24 @@ func (f *File) applyDefaults() {
 		v := true
 		f.Tools.WorkspaceHint = &v
 	}
+	if !f.Quality.enabledSet && f.Quality.Mode == "" && f.Quality.MaxVerificationRounds == 0 {
+		f.Quality.Enabled = true
+	}
+	if !f.Quality.Enabled {
+		f.Quality.Mode = "fast"
+	} else {
+		switch strings.ToLower(strings.TrimSpace(f.Quality.Mode)) {
+		case "fast":
+			f.Quality.Mode = "fast"
+		case "verified", "verify", "strict":
+			f.Quality.Mode = "verified"
+		default:
+			f.Quality.Mode = "balanced"
+		}
+	}
+	if f.Quality.MaxVerificationRounds <= 0 {
+		f.Quality.MaxVerificationRounds = 1
+	}
 	f.Upstream.Models = normalizeModelEntries(f.Upstream.Models, f.Upstream.Model, f.Upstream.Thinking.Default, f.Upstream.Families)
 	if len(f.Upstream.Models) == 0 && f.Upstream.Model != "" {
 		th := NormalizeThinkingLevel(f.Upstream.Thinking.Default)
@@ -405,6 +485,21 @@ func (f *File) applyDefaults() {
 		f.Upstream.Model = f.Upstream.Models[0].ResolveUpstream()
 	}
 	f.migrateProviderToFamilies()
+}
+
+// QualityMode returns the normalized effective quality mode.
+func (f *File) QualityMode() string {
+	if f == nil || !f.Quality.Enabled {
+		return "fast"
+	}
+	switch strings.ToLower(strings.TrimSpace(f.Quality.Mode)) {
+	case "fast":
+		return "fast"
+	case "verified", "verify", "strict":
+		return "verified"
+	default:
+		return "balanced"
+	}
 }
 
 func normalizeModelEntries(in []ModelEntry, defaultUpstream, defaultThinking string, families []FamilyConfig) []ModelEntry {
@@ -474,6 +569,9 @@ func normalizeModelEntries(in []ModelEntry, defaultUpstream, defaultThinking str
 		// 继承 family 级 token 配置
 		ctxWin := m.ContextWindow
 		maxTok := m.MaxTokens
+		thinkingType := m.ThinkingType
+		thinkingBudget := m.ThinkingBudgetTokens
+		thinkingParam := m.ThinkingParam
 		if fc, ok := famByUID[familyUID]; ok {
 			if ctxWin <= 0 {
 				ctxWin = fc.ContextWindow
@@ -481,12 +579,30 @@ func normalizeModelEntries(in []ModelEntry, defaultUpstream, defaultThinking str
 			if maxTok <= 0 {
 				maxTok = fc.MaxTokens
 			}
+			if thinkingType == "" {
+				thinkingType = fc.ThinkingType
+			}
+			if thinkingBudget <= 0 {
+				thinkingBudget = fc.ThinkingBudgetTokens
+			}
+			if thinkingParam == "" {
+				thinkingParam = fc.ThinkingParam
+			}
 		} else if fc, ok := famByLabel[family]; ok {
 			if ctxWin <= 0 {
 				ctxWin = fc.ContextWindow
 			}
 			if maxTok <= 0 {
 				maxTok = fc.MaxTokens
+			}
+			if thinkingType == "" {
+				thinkingType = fc.ThinkingType
+			}
+			if thinkingBudget <= 0 {
+				thinkingBudget = fc.ThinkingBudgetTokens
+			}
+			if thinkingParam == "" {
+				thinkingParam = fc.ThinkingParam
 			}
 		}
 		if ctxWin <= 0 {
@@ -511,11 +627,14 @@ func normalizeModelEntries(in []ModelEntry, defaultUpstream, defaultThinking str
 			Label:         label,
 			UpstreamModel: up,
 			Thinking:      thinking,
+			ThinkingType:  thinkingType, ThinkingBudgetTokens: thinkingBudget, ThinkingParam: thinkingParam,
 			Family:        family,
 			FamilyUID:     familyUID,
 			FamilyOrder:   order,
 			ContextWindow: ctxWin,
 			MaxTokens:     maxTok,
+			Provider:      m.Provider, BaseURL: m.BaseURL, APIKey: m.APIKey,
+			Headers: m.Headers, TimeoutSec: m.TimeoutSec,
 		})
 	}
 	_ = defaultUpstream
@@ -570,6 +689,7 @@ func DevinFamilyOrder(level string) int {
 		return 1
 	}
 }
+
 // NormalizeThinkingLevel 统一思考强度命名。
 func NormalizeThinkingLevel(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
@@ -688,7 +808,7 @@ func (f *File) ToolsMode() string {
 	return NormalizeToolsMode(f.Tools.Mode)
 }
 
-	// WorkspaceHint 是否注入工作区提示，默认 true
+// WorkspaceHint 是否注入工作区提示，默认 true
 func (f *File) ToolsWorkspaceHint() bool {
 	if f.Tools.WorkspaceHint == nil {
 		return true
@@ -696,7 +816,7 @@ func (f *File) ToolsWorkspaceHint() bool {
 	return *f.Tools.WorkspaceHint
 }
 
-	// TimeoutSec 有工具时聊天总超时；0 则至少 300s 或跟随 upstream.timeout_sec
+// TimeoutSec 有工具时聊天总超时；0 则至少 300s 或跟随 upstream.timeout_sec
 // ResolveChatTimeoutSec 聊天总超时：无工具用 upstream.timeout_sec；有工具优先 tools.timeout_sec。
 func (f *File) ResolveChatTimeoutSec(hasTools bool) int {
 	base := f.Upstream.TimeoutSec
@@ -756,7 +876,6 @@ func (f *File) DefaultModelID() string {
 	}
 	return ms[0].ID
 }
-
 
 // compactModelKey 去掉分隔符，便于 grok4.5 对齐 grok-4.5-byok-high。
 func compactModelKey(s string) string {
@@ -921,7 +1040,6 @@ func (f *File) FeatureModelIDForCodeMapMode(mode string) string {
 	}
 }
 
-
 func (m ModelEntry) ResolveUpstream() string {
 	if strings.TrimSpace(m.UpstreamModel) != "" {
 		return m.UpstreamModel
@@ -944,20 +1062,22 @@ func NormalizeChatCompletionsURL(baseURL string) string {
 	return u + "/v1/chat/completions"
 }
 
-
 // FamilyGroup 以 family 聚合（含供应商配置）。
 type FamilyGroup struct {
-	UID           string       `json:"uid"`
-	Label         string       `json:"label"`
-	ContextWindow int          `json:"context_window"`
-	MaxTokens     int          `json:"max_tokens"`
-	Provider      string       `json:"provider"`
-	BaseURL       string       `json:"base_url"`
-	APIKeyMasked  string       `json:"api_key_masked"`
-	APIKeySet     bool         `json:"api_key_set"`
-	UpstreamModel string       `json:"upstream_model"`
-	TimeoutSec    int          `json:"timeout_sec"`
-	Variants      []ModelEntry `json:"variants"`
+	UID                  string       `json:"uid"`
+	Label                string       `json:"label"`
+	ContextWindow        int          `json:"context_window"`
+	MaxTokens            int          `json:"max_tokens"`
+	Provider             string       `json:"provider"`
+	BaseURL              string       `json:"base_url"`
+	APIKeyMasked         string       `json:"api_key_masked"`
+	APIKeySet            bool         `json:"api_key_set"`
+	UpstreamModel        string       `json:"upstream_model"`
+	TimeoutSec           int          `json:"timeout_sec"`
+	ThinkingType         string       `json:"thinking_type,omitempty"`
+	ThinkingBudgetTokens int          `json:"thinking_budget_tokens,omitempty"`
+	ThinkingParam        string       `json:"thinking_param,omitempty"`
+	Variants             []ModelEntry `json:"variants"`
 }
 
 // GroupModelsByFamily 返回 family 卡片数据。
@@ -1013,6 +1133,7 @@ func (f *File) GroupModelsByFamily() []FamilyGroup {
 				UID: uid, Label: label, ContextWindow: ctx, MaxTokens: maxo,
 				Provider: prov, BaseURL: base, APIKeyMasked: MaskAPIKey(key), APIKeySet: key != "",
 				UpstreamModel: up, TimeoutSec: to,
+				ThinkingType: fc.ThinkingType, ThinkingBudgetTokens: fc.ThinkingBudgetTokens, ThinkingParam: fc.ThinkingParam,
 			}
 			m[uid] = g
 			order = append(order, uid)
@@ -1033,16 +1154,19 @@ func (f *File) GroupModelsByFamily() []FamilyGroup {
 
 // FamilyUpsertInput GUI/API 创建更新 family+供应商+思考强度。
 type FamilyUpsertInput struct {
-	UID           string   `json:"uid"`
-	Label         string   `json:"label"`
-	UpstreamModel string   `json:"upstream_model"`
-	Provider      string   `json:"provider"`
-	BaseURL       string   `json:"base_url"`
-	APIKey        string   `json:"api_key"`
-	ContextWindow int      `json:"context_window"`
-	MaxTokens     int      `json:"max_tokens"`
-	TimeoutSec    int      `json:"timeout_sec"`
-	Levels        []string `json:"levels"`
+	UID                  string   `json:"uid"`
+	Label                string   `json:"label"`
+	UpstreamModel        string   `json:"upstream_model"`
+	Provider             string   `json:"provider"`
+	BaseURL              string   `json:"base_url"`
+	APIKey               string   `json:"api_key"`
+	ContextWindow        int      `json:"context_window"`
+	MaxTokens            int      `json:"max_tokens"`
+	TimeoutSec           int      `json:"timeout_sec"`
+	Levels               []string `json:"levels"`
+	ThinkingType         string   `json:"thinking_type"`
+	ThinkingBudgetTokens int      `json:"thinking_budget_tokens"`
+	ThinkingParam        string   `json:"thinking_param"`
 }
 
 // UpsertFamilyPresets 创建/更新 family 的供应商与思考强度变体。
@@ -1100,6 +1224,9 @@ func (f *File) UpsertFamilyPresets(in FamilyUpsertInput) {
 				f.Upstream.Families[i].APIKey = key
 			}
 			f.Upstream.Families[i].UpstreamModel = up
+			f.Upstream.Families[i].ThinkingType = strings.TrimSpace(in.ThinkingType)
+			f.Upstream.Families[i].ThinkingBudgetTokens = in.ThinkingBudgetTokens
+			f.Upstream.Families[i].ThinkingParam = strings.TrimSpace(in.ThinkingParam)
 			if in.TimeoutSec > 0 {
 				f.Upstream.Families[i].TimeoutSec = in.TimeoutSec
 			}
@@ -1117,7 +1244,8 @@ func (f *File) UpsertFamilyPresets(in FamilyUpsertInput) {
 		f.Upstream.Families = append(f.Upstream.Families, FamilyConfig{
 			UID: uid, Label: label, ContextWindow: ctxWin, MaxTokens: maxOut,
 			Provider: prov, BaseURL: base, APIKey: key, UpstreamModel: up,
-			TimeoutSec: in.TimeoutSec,
+			TimeoutSec:   in.TimeoutSec,
+			ThinkingType: strings.TrimSpace(in.ThinkingType), ThinkingBudgetTokens: in.ThinkingBudgetTokens, ThinkingParam: strings.TrimSpace(in.ThinkingParam),
 		})
 	}
 	// rebuild variants
@@ -1142,6 +1270,7 @@ func (f *File) UpsertFamilyPresets(in FamilyUpsertInput) {
 			ID: id, Label: label + " " + capitalize(lv), UpstreamModel: up,
 			Thinking: lv, Family: label, FamilyUID: uid, FamilyOrder: DevinFamilyOrder(lv),
 			ContextWindow: ctxWin, MaxTokens: maxOut,
+			ThinkingType: strings.TrimSpace(in.ThinkingType), ThinkingBudgetTokens: in.ThinkingBudgetTokens, ThinkingParam: strings.TrimSpace(in.ThinkingParam),
 		})
 	}
 	f.Upstream.Models = kept
@@ -1154,11 +1283,8 @@ func capitalize(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-
-
 // slugID public alias
 func SlugID(s string) string { return slugID(s) }
-
 
 func (f *File) CacheMode() string {
 	m := strings.ToLower(strings.TrimSpace(f.Cache.Mode))
@@ -1183,7 +1309,6 @@ func (f *File) ResponseCacheEnabled() bool {
 	m := f.CacheMode()
 	return m == "response" || m == "both"
 }
-
 
 func NormalizeProvider(p string) string {
 	switch strings.ToLower(strings.TrimSpace(p)) {
@@ -1282,14 +1407,17 @@ func (f *File) migrateProviderToFamilies() {
 
 // ProviderResolved 解析后的供应商连接信息。
 type ProviderResolved struct {
-	Provider      string
-	BaseURL       string
-	APIKey        string
-	UpstreamModel string
-	Headers       map[string]string
-	TimeoutSec    int
-	FamilyUID     string
-	FamilyLabel   string
+	Provider             string
+	BaseURL              string
+	APIKey               string
+	UpstreamModel        string
+	Headers              map[string]string
+	TimeoutSec           int
+	FamilyUID            string
+	FamilyLabel          string
+	ThinkingType         string
+	ThinkingBudgetTokens int
+	ThinkingParam        string
 }
 
 // ResolveProvider 仅从选中的 family/model 解析供应商；不再用“全局默认 model 名”覆盖 upstream_model。
@@ -1324,6 +1452,13 @@ func (f *File) ResolveProvider(selectedUID string) (ProviderResolved, bool) {
 	out.BaseURL = firstNonEmpty(m.BaseURL, fam.BaseURL, f.Upstream.BaseURL)
 	out.APIKey = firstNonEmpty(m.APIKey, fam.APIKey, f.Upstream.APIKey)
 	out.UpstreamModel = firstNonEmpty(m.UpstreamModel, fam.UpstreamModel, m.ID)
+	out.ThinkingType = firstNonEmpty(m.ThinkingType, fam.ThinkingType)
+	if m.ThinkingBudgetTokens > 0 {
+		out.ThinkingBudgetTokens = m.ThinkingBudgetTokens
+	} else {
+		out.ThinkingBudgetTokens = fam.ThinkingBudgetTokens
+	}
+	out.ThinkingParam = firstNonEmpty(m.ThinkingParam, fam.ThinkingParam, f.Upstream.Thinking.Param)
 	out.TimeoutSec = m.TimeoutSec
 	if out.TimeoutSec <= 0 {
 		out.TimeoutSec = fam.TimeoutSec

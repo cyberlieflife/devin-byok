@@ -4,7 +4,9 @@ package desktop
 
 import (
 	"fmt"
+	"html"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -12,7 +14,11 @@ import (
 const launchAgentLabel = "com.devin-byok.serve"
 
 func AutostartPath() string {
-	return filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", launchAgentLabel+".plist")
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.Getenv("HOME")
+	}
+	return filepath.Join(home, "Library", "LaunchAgents", launchAgentLabel+".plist")
 }
 
 func AutostartEnabled() bool {
@@ -23,6 +29,7 @@ func AutostartEnabled() bool {
 func SetAutostart(on bool, projectDir, cliExe string) error {
 	plistPath := AutostartPath()
 	if !on {
+		_ = exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d", os.Getuid()), plistPath).Run()
 		_ = os.Remove(plistPath)
 		return nil
 	}
@@ -33,7 +40,13 @@ func SetAutostart(on bool, projectDir, cliExe string) error {
 		projectDir = filepath.Dir(cliExe)
 	}
 	dir := filepath.Dir(plistPath)
-	_ = os.MkdirAll(dir, 0o755)
+	logDir := filepath.Join(filepath.Dir(dir), "Logs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		return err
+	}
 	content := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -57,8 +70,15 @@ func SetAutostart(on bool, projectDir, cliExe string) error {
 	<string>%s</string>
 </dict>
 </plist>
-`, launchAgentLabel, cliExe, projectDir,
-		filepath.Join(filepath.Dir(plistPath), "..", "Logs", launchAgentLabel+".out.log"),
-		filepath.Join(filepath.Dir(plistPath), "..", "Logs", launchAgentLabel+".err.log"))
-	return os.WriteFile(plistPath, []byte(content), 0o644)
+`, html.EscapeString(launchAgentLabel), html.EscapeString(cliExe), html.EscapeString(projectDir),
+		html.EscapeString(filepath.Join(logDir, launchAgentLabel+".out.log")),
+		html.EscapeString(filepath.Join(logDir, launchAgentLabel+".err.log")))
+	if err := os.WriteFile(plistPath, []byte(content), 0o644); err != nil {
+		return err
+	}
+	_ = exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d", os.Getuid()), plistPath).Run()
+	if err := exec.Command("launchctl", "bootstrap", fmt.Sprintf("gui/%d", os.Getuid()), plistPath).Run(); err != nil {
+		return fmt.Errorf("launchctl bootstrap: %w", err)
+	}
+	return nil
 }

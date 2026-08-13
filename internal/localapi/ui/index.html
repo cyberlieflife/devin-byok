@@ -18,10 +18,10 @@
     </div>
     <div class="top-actions">
       <span class="pill" id="apiPill"><i class="dot" id="apiDot"></i><span id="apiText">检测中</span></span>
-      <button class="btn btn-secondary" id="btnSettings" onclick="showPage('settings')">设置</button>
-      <button class="btn btn-primary" onclick="showPage('monitor')">监控</button>
-      <button class="btn btn-secondary" onclick="showPage('models')">模型</button>
-      <button class="btn btn-secondary" onclick="showPage('prompts')">提示词</button>
+      <button class="btn btn-secondary btn-nav" id="btnSettings" data-page="settings" onclick="showPage('settings')">设置</button>
+      <button class="btn btn-primary btn-nav active" data-page="monitor" onclick="showPage('monitor')">监控</button>
+      <button class="btn btn-secondary btn-nav" data-page="models" onclick="showPage('models')">模型</button>
+      <button class="btn btn-secondary btn-nav" data-page="prompts" onclick="showPage('prompts')">提示词</button>
     </div>
   </header>
 
@@ -200,6 +200,25 @@
       <h1>设置</h1>
       <p class="muted">供应商以外的运行策略（工具 / 流式 / 超时）</p>
     </section>
+    <section class="card local-account" aria-labelledby="localAccountTitle">
+      <div class="row-between local-account-head">
+        <div>
+          <div class="card-h" id="localAccountTitle">本地虚拟账户</div>
+          <div class="local-account-state" id="localAccountState">检测中…</div>
+        </div>
+        <span class="account-badge" id="localAccountBadge">未创建</span>
+      </div>
+      <div class="account-fields" id="localAccountFields" hidden>
+        <div><span>名称</span><strong id="localAccountName">-</strong></div>
+        <div><span>邮箱</span><strong id="localAccountEmail">-</strong></div>
+        <div><span>账户 ID</span><strong id="localAccountID">-</strong></div>
+        <div><span>本地密钥</span><strong id="localAccountKey">-</strong></div>
+      </div>
+      <div class="row gap local-account-actions">
+        <button class="btn btn-primary" id="btnImportLocalAccount" onclick="importLocalAccount()">一键创建并导入</button>
+        <button class="btn btn-secondary" id="btnRefreshLocalAccount" onclick="refreshLocalAccount()">刷新状态</button>
+      </div>
+    </section>
     <div class="two-col">
       <div class="card">
         <div class="card-h">说明</div>
@@ -221,6 +240,10 @@
           </select>
         </div>
         <div class="field"><label>tools.timeout_sec（有工具时的聊天总超时，秒；命令/写入假流式保活依赖此值）</label><input id="tools_timeout_sec" type="number"/></div>
+        <div class="card-h" style="margin-top:12px">质量模式</div>
+        <label class="check"><input type="checkbox" id="quality_enabled" checked/> 启用可靠性提示词</label>
+        <div class="field"><label for="quality_mode">模式</label><select id="quality_mode"><option value="fast">fast</option><option value="balanced" selected>balanced</option><option value="verified">verified</option></select></div>
+        <div class="field"><label for="max_verification_rounds">最大验证轮数</label><input id="max_verification_rounds" type="number" min="1" value="1"/></div>
         <label class="check"><input type="checkbox" id="enable_stream"/> 流式输出</label>
         <label class="check"><input type="checkbox" id="enable_cascade_tools"/> Cascade 工具</label>
         <label class="check"><input type="checkbox" id="pure_local" checked disabled/> 纯本地 pure_local（已强制：仅单机，混合模式已取消）</label>
@@ -264,11 +287,11 @@
 
 <!-- modal -->
 <div class="modal-mask" id="familyModal" hidden>
-  <div class="modal card">
+  <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="familyModalTitle">
     <div class="card-h" id="familyModalTitle">添加模型</div>
     <input type="hidden" id="f_uid" value=""/>
-    <div class="field"><label>显示名 Label</label><input id="f_label" placeholder="Grok 4.5"/></div>
-    <div class="field"><label>上游模型 ID</label><input id="f_upstream" placeholder="grok-4.5"/></div>
+    <div class="field"><label for="f_label">显示名 Label</label><input id="f_label" autocomplete="off" spellcheck="false" placeholder="Grok 4.5"/></div>
+    <div class="field"><label for="f_upstream">上游模型 ID</label><input id="f_upstream" autocomplete="off" spellcheck="false" placeholder="grok-4.5"/></div>
     <div class="muted small" id="f_uid_hint">Family UID 将自动生成为：-</div>
     <div class="field"><label>接口类型</label>
       <select id="f_provider">
@@ -277,10 +300,13 @@
         <option value="anthropic">Anthropic Messages</option>
       </select>
     </div>
-    <div class="field"><label>Base URL</label><input id="f_base" placeholder="http://localhost:8317/v1"/></div>
-    <div class="field"><label>API Key（留空则不修改已有 Key）</label><input id="f_key" type="password" placeholder="sk-..."/></div>
-    <div class="field"><label>context_window</label><input id="f_ctx" type="number" value="128000"/></div>
-    <div class="field"><label>max_tokens（输出）</label><input id="f_max" type="number" value="8192"/></div>
+    <div class="field"><label for="f_base">Base URL</label><input id="f_base" type="url" autocomplete="url" spellcheck="false" placeholder="http://localhost:8317/v1"/></div>
+    <div class="field"><label for="f_key">API Key（编辑时留空表示保留原 Key）</label><input id="f_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="sk-..."/></div>
+    <div class="field"><label for="f_ctx">context_window</label><input id="f_ctx" type="number" inputmode="numeric" value="128000"/></div>
+    <div class="field"><label for="f_max">max_tokens（输出）</label><input id="f_max" type="number" inputmode="numeric" value="8192"/></div>
+    <div class="field"><label for="f_thinking_type">Anthropic thinking</label><select id="f_thinking_type"><option value="">不启用</option><option value="enabled">enabled</option></select></div>
+    <div class="field"><label for="f_thinking_budget">thinking budget_tokens（小于 max_tokens）</label><input id="f_thinking_budget" type="number" inputmode="numeric" value="0"/></div>
+    <div class="field"><label for="f_thinking_param">OpenAI thinking 参数</label><input id="f_thinking_param" value="reasoning_effort"/></div>
     <div class="field"><label>思考强度（可多选）</label>
       <div class="chip-row" id="f_levels_box" style="margin-top:6px">
         <label class="check"><input type="checkbox" class="f-level" value="low" checked/> low</label>

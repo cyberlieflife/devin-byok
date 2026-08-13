@@ -2,10 +2,22 @@
 
 package main
 
+/*
+#cgo darwin LDFLAGS: -framework Cocoa
+void devin_order_out(void *window);
+void devin_make_key_and_order_front(void *window);
+void devin_activate_and_focus(void *window);
+int devin_is_miniaturized(void *window);
+*/
+import "C"
+
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"devin-byok/internal/desktop"
@@ -15,9 +27,9 @@ import (
 )
 
 var (
-	mainWindow      webview.WebView
-	mainWindowMu    sync.Mutex
-	lockFile        *os.File
+	mainWindow   webview.WebView
+	mainWindowMu sync.Mutex
+	lockFile     *os.File
 )
 
 func guiInit() bool {
@@ -61,6 +73,7 @@ func guiNavigate(w interface{}, url string) {
 
 func guiRun(w interface{}) {
 	ww := w.(webview.WebView)
+	ww.Dispatch(func() { C.devin_activate_and_focus(ww.Window()) })
 	ww.Run()
 }
 
@@ -74,28 +87,43 @@ func guiWatchMinimize() {
 		if !desktop.LoadPrefs().MinimizeToTray {
 			continue
 		}
-		// macOS: webview auto-minimizes via native window manager
+		dispatchMainWindow(func(w webview.WebView) {
+			if C.devin_is_miniaturized(w.Window()) != 0 {
+				C.devin_order_out(w.Window())
+			}
+		})
 	}
 }
 
 func hideMainWindow() {
 	mainWindowMu.Lock()
-	defer mainWindowMu.Unlock()
-	if mainWindow != nil {
-		mainWindow.SetSize(0, 0, webview.HintMin)
+	w := mainWindow
+	mainWindowMu.Unlock()
+	if w != nil {
+		w.Dispatch(func() { C.devin_order_out(w.Window()) })
 	}
 }
 
 func showMainWindow() {
 	mainWindowMu.Lock()
-	defer mainWindowMu.Unlock()
-	if mainWindow != nil {
-		mainWindow.SetSize(1100, 780, webview.HintNone)
+	w := mainWindow
+	mainWindowMu.Unlock()
+	if w != nil {
+		w.Dispatch(func() { C.devin_activate_and_focus(w.Window()) })
+	}
+}
+
+func dispatchMainWindow(fn func(webview.WebView)) {
+	mainWindowMu.Lock()
+	w := mainWindow
+	mainWindowMu.Unlock()
+	if w != nil {
+		w.Dispatch(func() { fn(w) })
 	}
 }
 
 func bringExistingToFront() {
-	showMainWindow()
+	_ = exec.Command("open", "-a", title).Start()
 }
 
 func ensureSingleInstance() bool {
@@ -104,6 +132,13 @@ func ensureSingleInstance() bool {
 	lockPath := filepath.Join(dir, "gui.lock")
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
+		return true
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return false
+		}
 		return true
 	}
 	lockFile = f

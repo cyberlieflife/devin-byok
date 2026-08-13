@@ -9,43 +9,67 @@ auth:
   fake_name: "BYOK Local"
 
 upstream:
-  base_url: "https://api.openai.com/v1"
-  api_key: "sk-xxx"
-  model: "gpt-4.1-mini"
+  base_url: "https://api.example.com/v1"
+  api_key: ""
+  model: "grok-4.5"
   thinking:
     param: "reasoning_effort"
     default: "medium"
   families:
-    - uid: "gpt-4.1-mini-byok"
-      label: "GPT-4.1 Mini BYOK"
+    - uid: "grok-4-5-byok"
+      label: "Grok 4.5"
       context_window: 128000
       max_tokens: 8192
+      provider: "openai"
+      base_url: "https://api.example.com/v1"
+      api_key: ""
+      upstream_model: "grok-4.5"
+    - uid: "claude-opus-4-6-byok"
+      label: "Claude Opus 4.6"
+      context_window: 200000
+      max_tokens: 8192
+      provider: "anthropic"
+      base_url: "https://api.example.com"
+      api_key: ""
+      upstream_model: "claude-opus-4-6"
+    - uid: "claude-opus-4-6-thinking-byok"
+      label: "Claude Opus 4.6 Thinking"
+      context_window: 200000
+      max_tokens: 8192
+      thinking_type: "enabled"
+      thinking_budget_tokens: 4096
+      provider: "anthropic"
+      base_url: "https://api.example.com"
+      api_key: ""
+      upstream_model: "claude-opus-4-6-thinking"
   models:
-    - id: "mini-low"
-      label: "GPT-4.1 Mini BYOK Low"
-      upstream_model: "gpt-4.1-mini"
-      thinking: "low"
-      family: "GPT-4.1 Mini BYOK"
-      family_uid: "gpt-4.1-mini-byok"
-    - id: "mini-medium"
-      label: "GPT-4.1 Mini BYOK Medium"
-      upstream_model: "gpt-4.1-mini"
+    - id: "grok-4-5-byok-medium"
+      label: "Grok 4.5 Medium"
+      upstream_model: "grok-4.5"
       thinking: "medium"
-      family: "GPT-4.1 Mini BYOK"
-      family_uid: "gpt-4.1-mini-byok"
-    - id: "mini-high"
-      label: "GPT-4.1 Mini BYOK High"
-      upstream_model: "gpt-4.1-mini"
-      thinking: "high"
-      family: "GPT-4.1 Mini BYOK"
-      family_uid: "gpt-4.1-mini-byok"
+      family: "Grok 4.5"
+      family_uid: "grok-4-5-byok"
+    - id: "claude-opus-4-6-byok-medium"
+      label: "Claude Opus 4.6 Medium"
+      upstream_model: "claude-opus-4-6"
+      thinking: "medium"
+      family: "Claude Opus 4.6"
+      family_uid: "claude-opus-4-6-byok"
+    - id: "claude-opus-4-6-thinking-byok-medium"
+      label: "Claude Opus 4.6 Thinking Medium"
+      upstream_model: "claude-opus-4-6-thinking"
+      thinking: "medium"
+      thinking_type: "enabled"
+      thinking_budget_tokens: 4096
+      family: "Claude Opus 4.6 Thinking"
+      family_uid: "claude-opus-4-6-thinking-byok"
   timeout_sec: 120
   sampling:
     temperature: 0.7
     max_tokens: 8192
 
 devin:
-  # Windows: D:\\Devin       macOS: /Applications/Devin.app/Contents/Resources/app
+  # Windows: D:\\Devin       macOS: /Applications/Devin.app
   install_dir: ""
   portal_url_keys:
     - "devin.portalUrl"
@@ -59,15 +83,25 @@ features:
   enable_stream: true
   enable_deepwiki: true
   enable_codemap: true
-  deepwiki_model: mini-medium
-  codemap_model: mini-medium
-  codemap_fast_model: mini-medium
-  codemap_smart_model: mini-medium
+  deepwiki_model: claude-opus-4-6-byok-medium
+  codemap_model: claude-opus-4-6-byok-medium
+  codemap_fast_model: claude-opus-4-6-byok-medium
+  codemap_smart_model: claude-opus-4-6-byok-medium
+  command_model: claude-opus-4-6-byok-medium
+  title_model: claude-opus-4-6-byok-medium
+  fast_context_model: claude-opus-4-6-byok-medium
 
 tools:
   mode: "standard"
   timeout_sec: 300
   workspace_hint: true
+
+quality:
+  enabled: true
+  mode: balanced
+  max_verification_rounds: 1
+  reviewer_model: ""
+  reviewer_effort: high
 
 cache:
   # prompt=对齐 cursor-byok（推荐）；response=本地整段缓存；both=两者
@@ -80,6 +114,6 @@ cache:
 update:
   enabled: true
   repo: cyberlieflife/devin-byok
-  # 平台自动检测：windows-amd64.zip / darwin-arm64.zip / darwin-x64.zip
+  # 留空时按当前平台自动匹配：windows-amd64.exe / darwin-arm64.dmg / darwin-x64.dmg
   asset_contains: ""
   auto_apply: false

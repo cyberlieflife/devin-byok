@@ -32,8 +32,16 @@ func main() {
 	if inf == "" {
 		inf = api
 	}
+	portal := strings.TrimRight(os.Getenv("DEVIN_BYOK_PORTAL_URL"), "/")
+	if portal == "" {
+		portal = "http://127.0.0.1:8787"
+	}
+	register := strings.TrimRight(os.Getenv("DEVIN_BYOK_REGISTER_USER_URL"), "/")
+	if register == "" {
+		register = "http://127.0.0.1:8787/register_user/after"
+	}
 
-	args := rewriteArgs(os.Args[1:], api, inf)
+	args := rewriteArgs(os.Args[1:], api, inf, portal, register)
 
 	// 记录启动参数，便于验证
 	logPath := filepath.Join(platform.DataDir(), "ls-wrapper-last.json")
@@ -54,10 +62,10 @@ func main() {
 	}
 }
 
-func rewriteArgs(in []string, api, inf string) []string {
-	out := make([]string, 0, len(in)+4)
+func rewriteArgs(in []string, api, inf, portal, register string) []string {
+	out := make([]string, 0, len(in)+6)
 	skipNext := false
-	seenAPI, seenInf := false, false
+	seenAPI, seenInf, seenPortal, seenRegister := false, false, false, false
 	for i := 0; i < len(in); i++ {
 		if skipNext {
 			skipNext = false
@@ -77,6 +85,18 @@ func rewriteArgs(in []string, api, inf string) []string {
 			if i+1 < len(in) {
 				skipNext = true
 			}
+		case "--portal_url":
+			out = append(out, a, portal)
+			seenPortal = true
+			if i+1 < len(in) {
+				skipNext = true
+			}
+		case "--register_user_url":
+			out = append(out, a, register)
+			seenRegister = true
+			if i+1 < len(in) {
+				skipNext = true
+			}
 		default:
 			// 兼容 --api_server_url=xxx
 			if strings.HasPrefix(a, "--api_server_url=") {
@@ -89,6 +109,16 @@ func rewriteArgs(in []string, api, inf string) []string {
 				seenInf = true
 				continue
 			}
+			if strings.HasPrefix(a, "--portal_url=") {
+				out = append(out, "--portal_url", portal)
+				seenPortal = true
+				continue
+			}
+			if strings.HasPrefix(a, "--register_user_url=") {
+				out = append(out, "--register_user_url", register)
+				seenRegister = true
+				continue
+			}
 			out = append(out, a)
 		}
 	}
@@ -97,6 +127,12 @@ func rewriteArgs(in []string, api, inf string) []string {
 	}
 	if !seenInf {
 		out = append(out, "--inference_api_server_url", inf)
+	}
+	if !seenPortal {
+		out = append(out, "--portal_url", portal)
+	}
+	if !seenRegister {
+		out = append(out, "--register_user_url", register)
 	}
 	return out
 }

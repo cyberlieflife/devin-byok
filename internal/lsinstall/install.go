@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"devin-byok/internal/payload"
@@ -62,6 +63,34 @@ func IsInstalled(installDir string) bool {
 	real := filepath.Join(BinDir(installDir), platform.RealLanguageServerName())
 	_, err := os.Stat(real)
 	return err == nil
+}
+
+// CleanBundleArtifacts 清理历史安装留下的备份/临时文件，恢复 bundle 原貌。
+// 3.7.16 起不再修改 bundle，遗留文件会导致 Devin 安装完整性校验误报 corrupt。
+func CleanBundleArtifacts(installDir string) {
+	if installDir == "" {
+		installDir = platform.DefaultInstallDir()
+	}
+	if installDir == "" {
+		return
+	}
+	bin := BinDir(installDir)
+	lsName := platform.LanguageServerName()
+	entries, err := os.ReadDir(bin)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		n := e.Name()
+		if n == lsName || n == platform.RealLanguageServerName() {
+			continue
+		}
+		if strings.HasPrefix(n, lsName+".bak_") ||
+			strings.HasPrefix(n, lsName+".wrapperbak_") ||
+			strings.HasPrefix(n, lsName+".wrapper_before_restore_") {
+			_ = os.Remove(filepath.Join(bin, n))
+		}
+	}
 }
 
 // Install 将内置 wrapper 安装到 Devin language_server 路径。

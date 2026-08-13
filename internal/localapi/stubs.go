@@ -18,12 +18,12 @@ const (
 	chatSourceUnknown = 3 // 助手输出兜底
 
 	// StopReason (api_server GetChatMessageResponse)
-	stopReasonUnspecified = 0
-	stopReasonIncomplete  = 1
-	stopReasonStopPattern = 2 // 正常结束
-	stopReasonMaxTokens   = 3
+	stopReasonUnspecified  = 0
+	stopReasonIncomplete   = 1
+	stopReasonStopPattern  = 2 // 正常结束
+	stopReasonMaxTokens    = 3
 	stopReasonFunctionCall = 10
-	stopReasonError       = 13
+	stopReasonError        = 13
 
 	// ModelPricingType
 	// 注意：MODEL_PRICING_TYPE_BYOK(3) 在官方实现里会要求 legacy cascade，
@@ -67,14 +67,14 @@ func buildTeamConfig(cfg *config.File) []byte {
 	_ = cfg
 	var b []byte
 	b = pbwire.AppendString(b, 1, "byok-local-team") // team_id
-	b = pbwire.AppendBool(b, 5, true)                 // allow_mcp_servers
-	b = pbwire.AppendBool(b, 15, false)               // disable_tool_calls
-	b = pbwire.AppendBool(b, 26, false)               // disable_tool_call_execution_outside_workspace
-	b = pbwire.AppendBool(b, 28, false)               // disable_deepwiki
-	b = pbwire.AppendBool(b, 31, false)               // disable_codemaps
-	b = pbwire.AppendString(b, 32, "all")             // allow_codemap_sharing
-	b = pbwire.AppendBool(b, 33, false)               // disable_fast_context ★
-	b = pbwire.AppendBool(b, 34, false)               // disable_lifeguard
+	b = pbwire.AppendBool(b, 5, true)                // allow_mcp_servers
+	b = pbwire.AppendBool(b, 15, false)              // disable_tool_calls
+	b = pbwire.AppendBool(b, 26, false)              // disable_tool_call_execution_outside_workspace
+	b = pbwire.AppendBool(b, 28, false)              // disable_deepwiki
+	b = pbwire.AppendBool(b, 31, false)              // disable_codemaps
+	b = pbwire.AppendString(b, 32, "all")            // allow_codemap_sharing
+	b = pbwire.AppendBool(b, 33, false)              // disable_fast_context ★
+	b = pbwire.AppendBool(b, 34, false)              // disable_lifeguard
 	return b
 }
 
@@ -83,9 +83,9 @@ func buildPlanInfo(cfg *config.File) []byte {
 	// teams_tier = DEVIN_PRO，避免 FREE 额度门禁
 	b = pbwire.AppendEnum(b, 1, teamsTierDevinPro)
 	b = pbwire.AppendString(b, 2, "Devin BYOK Pro")
-	b = pbwire.AppendBool(b, 3, true)  // has_autocomplete_fast_mode
-	b = pbwire.AppendBool(b, 4, true)  // allow_sticky_premium_models
-	b = pbwire.AppendBool(b, 5, true)  // has_forge_access
+	b = pbwire.AppendBool(b, 3, true)    // has_autocomplete_fast_mode
+	b = pbwire.AppendBool(b, 4, true)    // allow_sticky_premium_models
+	b = pbwire.AppendBool(b, 5, true)    // has_forge_access
 	b = pbwire.AppendInt64(b, 6, 999999) // max_num_premium_chat_messages
 	b = pbwire.AppendInt64(b, 7, 200000) // max_num_chat_input_tokens
 	b = pbwire.AppendInt64(b, 8, 100000)
@@ -101,9 +101,9 @@ func buildPlanInfo(cfg *config.File) []byte {
 	b = pbwire.AppendBool(b, 27, true)
 	b = pbwire.AppendBool(b, 28, true)
 	b = pbwire.AppendBool(b, 29, true)
-	b = pbwire.AppendBool(b, 31, true) // browser_enabled
-	b = pbwire.AppendBool(b, 32, true) // has_paid_features
-	b = pbwire.AppendBool(b, 34, true) // is_devin
+	b = pbwire.AppendBool(b, 31, true)    // browser_enabled
+	b = pbwire.AppendBool(b, 32, true)    // has_paid_features
+	b = pbwire.AppendBool(b, 34, true)    // is_devin
 	b = pbwire.AppendInt32(b, 12, 999999) // monthly_prompt_credits
 	b = pbwire.AppendInt32(b, 13, 999999) // monthly_flow_credits
 	// cascade_allowed_models_config repeated = 21
@@ -350,7 +350,10 @@ func buildUserStatus(cfg *config.File) []byte {
 	// 混合模式：展示官方登录身份；纯本地用 Fake*
 	name := cfg.Auth.FakeName
 	email := cfg.Auth.FakeEmail
-	userID := "byok-local-user"
+	userID := cfg.Auth.FakeUserID
+	if userID == "" {
+		userID = "byok-local-user"
+	}
 	if !cfg.Features.PureLocal {
 		oid := getOfficialIdentity()
 		if oid.Name != "" {
@@ -386,6 +389,24 @@ func buildGetUserStatusResponse(cfg *config.File) []byte {
 	var b []byte
 	b = pbwire.AppendMessage(b, 1, buildUserStatus(cfg))
 	b = pbwire.AppendMessage(b, 2, buildPlanInfo(cfg))
+	return b
+}
+
+// buildRegisterUserResponse 伪造 SeatManagementService/RegisterUser 响应（3.7.16 登录链路）。
+// RegisterUserResponse: api_key=1, name=2, api_server_url=3, redirect_url=4, team_options=5(repeated)
+func buildRegisterUserResponse(cfg *config.File) []byte {
+	apiKey := cfg.Auth.FakeAPIKey
+	if apiKey == "" || !strings.HasPrefix(apiKey, "sk-ws-01-") {
+		apiKey = "sk-ws-01-byoklocal-fake-key-0000"
+	}
+	name := cfg.Auth.FakeName
+	if name == "" {
+		name = "BYOK Local"
+	}
+	var b []byte
+	b = pbwire.AppendString(b, 1, apiKey)
+	b = pbwire.AppendString(b, 2, name)
+	b = pbwire.AppendString(b, 3, cfg.Server.PublicBase+cfg.APIBasePath())
 	return b
 }
 
@@ -447,9 +468,9 @@ func buildCheckUserMessageRateLimitResponse() []byte {
 	var b []byte
 	b = pbwire.AppendBool(b, 1, true)
 	b = pbwire.AppendString(b, 2, "")
-	b = pbwire.AppendInt32(b, 3, 999999)  // messages_remaining
-	b = pbwire.AppendInt32(b, 4, 999999)  // max_messages
-	b = pbwire.AppendInt64(b, 5, 86400)   // resets_in_seconds
+	b = pbwire.AppendInt32(b, 3, 999999) // messages_remaining
+	b = pbwire.AppendInt32(b, 4, 999999) // max_messages
+	b = pbwire.AppendInt64(b, 5, 86400)  // resets_in_seconds
 	return b
 }
 
@@ -500,12 +521,13 @@ func buildPingResponse() []byte { return []byte{} }
 
 // GetChatMessageResponse with assistant action text
 // buildGetChatMessageResponse 构造 api_server_pb.GetChatMessageResponse（流式 delta）。
-//   1 message_id
-//   2 timestamp
-//   3 delta_text        最终可见回复
-//   4 delta_tokens
-//   5 stop_reason
-//   9 delta_thinking    思考链（reasoning_content）
+//
+//	1 message_id
+//	2 timestamp
+//	3 delta_text        最终可见回复
+//	4 delta_tokens
+//	5 stop_reason
+//	9 delta_thinking    思考链（reasoning_content）
 func buildGetChatMessageResponse(messageID, convID, text string, inProgress bool) []byte {
 	return buildGetChatMessageDelta(messageID, text, "", inProgress)
 }
@@ -615,20 +637,16 @@ func buildGetChatMessageErrorDelta(messageID, text string) []byte {
 	return b
 }
 
-
-
-// buildGetProfileDataResponse 最小合法用户资料。
+// buildGetProfileDataResponse 返回空的可选用户资料。
+// Devin 3.7.16 将 profile_data.field 1 解释为头像 URL，并会把它交给
+// Jimp 读取；写入显示名等普通文本会触发 "Could not load Buffer from URL"。
 func buildGetProfileDataResponse() []byte {
-	var b []byte
-	b = pbwire.AppendString(b, 1, "BYOK Local")
-	b = pbwire.AppendString(b, 2, "byok@local")
-	return b
+	return nil
 }
 
-func buildGetStatusResponse() []byte { return []byte{} }
+func buildGetStatusResponse() []byte                   { return []byte{} }
 func buildGetDefaultWorkflowTemplatesResponse() []byte { return []byte{} }
-func buildGetAllAcpRegistriesResponse() []byte { return []byte{} }
-
+func buildGetAllAcpRegistriesResponse() []byte         { return []byte{} }
 
 // buildGetUnleashDataResponse 强制开启 cascade-find-code-context，使 Fast Context 门控通过。
 func buildGetUnleashDataResponse() []byte {

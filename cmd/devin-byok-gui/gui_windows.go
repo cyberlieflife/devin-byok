@@ -70,23 +70,23 @@ func guiCreateWindow(uiURL string) interface{} {
 }
 
 func guiBind(w interface{}, name string, fn interface{}) error {
-	ww := w.(*webview2.WebView)
+	ww := w.(webview2.WebView)
 	_ = ww.Bind(name, fn)
 	return nil
 }
 
 func guiSetSize(w interface{}, width, height int) {
-	ww := w.(*webview2.WebView)
+	ww := w.(webview2.WebView)
 	ww.SetSize(width, height, webview2.HintNone)
 }
 
 func guiNavigate(w interface{}, url string) {
-	ww := w.(*webview2.WebView)
+	ww := w.(webview2.WebView)
 	ww.Navigate(url)
 }
 
 func guiRun(w interface{}) {
-	ww := w.(*webview2.WebView)
+	ww := w.(webview2.WebView)
 	ww.Run()
 }
 

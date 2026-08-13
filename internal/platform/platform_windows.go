@@ -5,6 +5,7 @@ package platform
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func dataDir() string {
@@ -55,8 +56,22 @@ func guiName() string {
 	return "devin-byok-gui.exe"
 }
 
+func guiBundleName() string {
+	return ""
+}
+
+func cliName() string {
+	return "devin-byok.exe"
+}
+
+func bundledCLIPath(exe string) string {
+	// The Windows release is a single GUI executable; it starts the embedded
+	// service itself and therefore is also the autostart target.
+	return exe
+}
+
 func assetSuffix() string {
-	return "windows-amd64.zip"
+	return "windows-amd64.exe"
 }
 
 func killCommand(pid string) []string {
@@ -65,6 +80,14 @@ func killCommand(pid string) []string {
 
 func defaultInstallDir() string {
 	return `D:\Devin`
+}
+
+func normalizeInstallDir(dir string) string {
+	return strings.TrimSpace(dir)
+}
+
+func releaseInstallDir(exe string) string {
+	return filepath.Dir(exe)
 }
 
 func extensionsBinSubPath() string {

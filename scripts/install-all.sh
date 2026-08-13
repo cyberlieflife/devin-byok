@@ -2,7 +2,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+if [ "$(basename "$SCRIPT_DIR")" = "scripts" ]; then
+  PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+else
+  PROJECT_DIR="$SCRIPT_DIR"
+fi
+cd "$PROJECT_DIR"
 
 echo "Building..."
 go build -o "$PROJECT_DIR/devin-byok" ./cmd/devin-byok

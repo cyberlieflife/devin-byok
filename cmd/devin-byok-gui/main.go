@@ -47,6 +47,21 @@ func main() {
 		logx.Infof("wrapper binary: %s", wpath)
 	}
 
+	// 3.7.16: 一次性还原历史对 bundle 的修改（旧方案的 ideinject 注入与 wrapper 备份残留），
+	// 消除 Devin "installation appears to be corrupt" 误报。
+	cfg0, err := config.Load(paths.FindConfig())
+	installDir := ""
+	if err == nil {
+		installDir = cfg0.Devin.InstallDir
+	}
+	if err := ideinject.RestoreContextUsageDonut(); err != nil {
+		logx.Warnf("restore ideinject: %v", err)
+	} else {
+		logx.Infof("ideinject restored (bundle untouched)")
+	}
+	lsinstall.CleanBundleArtifacts(installDir)
+	logx.Infof("bundle artifacts cleaned")
+
 	prefs := desktop.LoadPrefs()
 	systray.Register(onTrayReady, onTrayExit)
 
@@ -123,16 +138,11 @@ func main() {
 }
 
 func autoInstallWrapper() {
-	cfg, err := config.Load(paths.FindConfig())
-	if err != nil {
-		return
-	}
-	meta, err := lsinstall.InstallIfNeeded(cfg.Devin.InstallDir)
-	if err != nil {
-		logx.Warnf("auto install wrapper: %v", err)
-		return
-	}
-	logx.Infof("wrapper installed: %s", meta.Target)
+	// 3.7.16 适配：不再向 Devin.app bundle 写入 wrapper（签名应用受系统保护，
+	// 且会导致 "installation appears to be corrupt"）。
+	// 改用 codeiumDev.languageServerBinaryPath 覆盖，从用户目录启动 wrapper，
+	// 由 applyFromConfig 写入 settings.json 完成。
+	logx.Infof("auto install wrapper: skipped (languageServerBinaryPath override in use)")
 }
 
 func onTrayReady() {
@@ -255,11 +265,15 @@ func applyFromConfig() {
 	} else {
 		logx.Infof("apply ok")
 	}
-	if err := ideinject.ApplyContextUsageDonut(cfg.Devin.InstallDir); err != nil {
-		logx.Warnf("ideinject context-usage: %v", err)
-	} else {
-		logx.Infof("ideinject context-usage ok")
+	// 3.7.16: 写 dev 键（binaryPath 覆盖 + 多租户 + 关闭设置同步）
+	if wpath, err := lsinstall.MaterializeWrapper(); err == nil {
+		if err := devin.ApplyDevKeys(wpath); err != nil {
+			logx.Warnf("apply dev keys: %v", err)
+		} else {
+			logx.Infof("apply dev keys ok: %s", wpath)
+		}
 	}
+	// 3.7.16: 不再向 bundle 注入任何内容（ideinject 已停用）
 	if _, err := extinstall.InstallFromFS(extinstall.ExtFS, extinstall.ExtRoot); err != nil {
 		logx.Warnf("extension install: %v", err)
 	} else {

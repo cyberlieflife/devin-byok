@@ -1,4 +1,4 @@
-﻿package localapi
+package localapi
 
 import (
 	"context"
@@ -8,9 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"devin-byok/internal/pbwire"
-	"devin-byok/internal/upstream/openai"
 	"devin-byok/internal/logx"
+	"devin-byok/internal/pbwire"
+	"devin-byok/internal/promptstore"
+	"devin-byok/internal/upstream/openai"
 )
 
 // deepWikiReq 解析自 exa.chat_pb / api_server GetDeepWikiRequest。
@@ -29,7 +30,7 @@ const (
 	deepWikiRequestSummary = 1
 	deepWikiRequestArticle = 2
 
-	deepWikiModelPremium    = 4
+	deepWikiModelPremium = 4
 )
 
 // parseGetDeepWikiRequest 从解压后的 proto 提取 DeepWiki 字段。
@@ -212,9 +213,11 @@ func splitDeepWikiFollowups(text string) (body, followups string) {
 
 // buildGetDeepWikiDelta 构造 api_server_pb.GetDeepWikiResponse 帧。
 // 抓包/客户端错误证明 LS 反序列化的是 *api_server_pb.GetDeepWikiResponse，不是 language_server 版本：
-//   1 response   = api_server GetChatMessageResponse（delta_text / stop_reason）
-//   2 model_type = DeepWikiModelType
-//   3 is_followup = bool
+//
+//	1 response   = api_server GetChatMessageResponse（delta_text / stop_reason）
+//	2 model_type = DeepWikiModelType
+//	3 is_followup = bool
+//
 // 误用 RawChatMessage 包装会导致 "string field contains invalid UTF-8"。
 func buildGetDeepWikiDelta(messageID, text string, inProgress, isError, isFollowup bool) []byte {
 	var chat []byte
@@ -267,6 +270,12 @@ func (s *Server) handleGetDeepWiki(w http.ResponseWriter, r *http.Request, metho
 		{Role: "system", Content: system},
 		{Role: "user", Content: user},
 	}
+	composed := promptstore.ComposeMessages(msgs, promptstore.ComposeContext{
+		Route: "deepwiki", ModelID: uiModel, Family: prov.FamilyUID,
+		UserText: user, QualityMode: cfg.QualityMode(), QualityEnabled: boolPtr(cfg.Quality.Enabled),
+	})
+	msgs = composed.Messages
+	metricsPromptContext("deepwiki", promptstore.DetectTask(user), cfg.QualityMode(), cfg.ResolveThinking(uiModel), composed.ProfileIDs, composed.Hash)
 	maxTok := cfg.Upstream.Sampling.MaxTokens
 	if m, ok := cfg.FindModel(uiModel); ok && m.MaxTokens > 0 {
 		maxTok = m.MaxTokens
@@ -275,13 +284,15 @@ func (s *Server) handleGetDeepWiki(w http.ResponseWriter, r *http.Request, metho
 		maxTok = 4096
 	}
 	chatOpt := openai.ChatOptions{
-		Thinking:      cfg.ResolveThinking(uiModel),
-		ThinkingParam: cfg.Upstream.Thinking.Param,
-		Temperature:   cfg.Upstream.Sampling.Temperature,
-		MaxTokens:     maxTok,
-		TopP:          cfg.Upstream.Sampling.TopP,
-		BaseURL:       prov.BaseURL,
-		APIKey:        prov.APIKey,
+		Thinking:             cfg.ResolveThinking(uiModel),
+		ThinkingParam:        firstNonEmptyStr(prov.ThinkingParam, cfg.Upstream.Thinking.Param),
+		ThinkingType:         prov.ThinkingType,
+		ThinkingBudgetTokens: prov.ThinkingBudgetTokens,
+		Temperature:          cfg.Upstream.Sampling.Temperature,
+		MaxTokens:            maxTok,
+		TopP:                 cfg.Upstream.Sampling.TopP,
+		BaseURL:              prov.BaseURL,
+		APIKey:               prov.APIKey,
 	}
 	if cfg.PromptCacheEnabled() {
 		key := strings.TrimSpace(cfg.Cache.PromptCacheKey)

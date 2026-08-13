@@ -194,12 +194,14 @@ func MergeToolCallDeltas(dst []ToolCall, deltas []ToolCall) []ToolCall {
 
 // ChatOptions 单次请求可选项。
 type ChatOptions struct {
-	Thinking       string
-	ThinkingParam  string
-	Temperature    *float64
-	MaxTokens      int
-	TopP           *float64
-	Tools          []Tool
+	Thinking             string
+	ThinkingParam        string
+	ThinkingType         string
+	ThinkingBudgetTokens int
+	Temperature          *float64
+	MaxTokens            int
+	TopP                 *float64
+	Tools                []Tool
 	// ToolChoice OpenAI tool_choice：auto|required|none|或指定函数；空则有 tools 时默认 auto
 	ToolChoice     any
 	PromptCacheKey string

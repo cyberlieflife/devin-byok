@@ -125,6 +125,43 @@ func saveSettings(path string, m map[string]any) error {
 	return os.WriteFile(path, b, 0o644)
 }
 
+func applyDevKeysToSettings(m map[string]any, wrapperPath string) bool {
+	changed := false
+	set := func(k string, v any) {
+		if m[k] != v {
+			m[k] = v
+			changed = true
+		}
+	}
+	if wrapperPath != "" {
+		set("codeiumDev.languageServerBinaryPath", wrapperPath)
+	}
+	set("devin.multiTenantMode", true)
+	set("devin.cascade.enabled", true)
+	set("sync.enableSettings", false)
+	return changed
+}
+
+// ApplyDevKeys 写入 3.7.16 适配所需 settings 键：
+//   - codeiumDev.languageServerBinaryPath：从用户目录启动 wrapper（绕过受保护的 bundle）
+//   - devin.multiTenantMode：让扩展以多租户模式启动 LS（--portal_url 等参数生效）
+//   - devin.cascade.enabled：启用 Cascade 主发送链路
+//   - sync.enableSettings：关闭设置同步，防止云端覆盖
+func ApplyDevKeys(wrapperPath string) error {
+	paths, err := ResolvePaths()
+	if err != nil {
+		return err
+	}
+	m, err := loadSettings(paths.SettingsJSON)
+	if err != nil {
+		return err
+	}
+	if !applyDevKeysToSettings(m, wrapperPath) {
+		return nil
+	}
+	return saveSettings(paths.SettingsJSON, m)
+}
+
 // ApplyPortal 写入 portalUrl + codeium.apiServerUrl，强制 LS/ACP 指向本地兼容层。
 func ApplyPortal(portalBase string, settingKeys []string) (*ApplyResult, error) {
 	paths, err := ResolvePaths()

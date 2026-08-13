@@ -111,7 +111,8 @@ func restoreAt(installDir string) error {
 		return nil
 	}
 	htmlPath := sessionsHTML(installDir)
-	jsPath := filepath.Join(sessionsDir(installDir), scriptName)
+	dir := sessionsDir(installDir)
+	jsPath := filepath.Join(dir, scriptName)
 	raw, err := os.ReadFile(htmlPath)
 	if err != nil {
 		return nil
@@ -130,6 +131,15 @@ func restoreAt(installDir string) error {
 		}
 	}
 	_ = os.Remove(jsPath)
+	// 清理历史备份，恢复 bundle 原貌（避免安装完整性校验误报）
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			n := e.Name()
+			if strings.HasPrefix(n, "sessions.html.bak_byok_ctx_") {
+				_ = os.Remove(filepath.Join(dir, n))
+			}
+		}
+	}
 	_ = os.Remove(metaPath())
 	logx.Infof("ideinject context-usage: restored %s", htmlPath)
 	return nil

@@ -24,14 +24,20 @@ func New() *Client {
 }
 
 type messageReq struct {
-	Model       string    `json:"model"`
-	MaxTokens   int       `json:"max_tokens"`
-	System      string    `json:"system,omitempty"`
-	Messages    []msg     `json:"messages"`
-	Stream      bool      `json:"stream"`
-	Temperature *float64  `json:"temperature,omitempty"`
-	TopP        *float64  `json:"top_p,omitempty"`
-	Tools       []toolDef `json:"tools,omitempty"`
+	Model       string          `json:"model"`
+	MaxTokens   int             `json:"max_tokens"`
+	System      string          `json:"system,omitempty"`
+	Messages    []msg           `json:"messages"`
+	Stream      bool            `json:"stream"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	TopP        *float64        `json:"top_p,omitempty"`
+	Thinking    *thinkingConfig `json:"thinking,omitempty"`
+	Tools       []toolDef       `json:"tools,omitempty"`
+}
+
+type thinkingConfig struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens"`
 }
 
 type msg struct {
@@ -195,6 +201,18 @@ func (c *Client) build(model string, messages []openai.ChatMessage, stream bool,
 	req := messageReq{
 		Model: model, MaxTokens: maxTok, System: sys, Messages: msgs, Stream: stream,
 		Temperature: opt.Temperature, TopP: opt.TopP,
+	}
+	if strings.TrimSpace(opt.ThinkingType) != "" || opt.ThinkingBudgetTokens > 0 {
+		if !strings.EqualFold(strings.TrimSpace(opt.ThinkingType), "enabled") {
+			return nil, fmt.Errorf("anthropic thinking_type must be enabled when thinking is configured")
+		}
+		if opt.ThinkingBudgetTokens <= 0 {
+			return nil, fmt.Errorf("anthropic thinking_budget_tokens must be > 0")
+		}
+		if opt.ThinkingBudgetTokens >= maxTok {
+			return nil, fmt.Errorf("anthropic thinking_budget_tokens(%d) must be less than max_tokens(%d)", opt.ThinkingBudgetTokens, maxTok)
+		}
+		req.Thinking = &thinkingConfig{Type: "enabled", BudgetTokens: opt.ThinkingBudgetTokens}
 	}
 	for _, t := range opt.Tools {
 		req.Tools = append(req.Tools, toolDef{

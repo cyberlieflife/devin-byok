@@ -1,10 +1,17 @@
-﻿Devin BYOK v1.2.2 (GUI only)
+﻿Devin BYOK
 
-1. Copy config.example.yaml to config.yaml
-2. Edit config.yaml (base_url / api_key / upstream_model)
-3. Run devin-byok-gui.exe
-4. Click Start service in GUI (auto apply to Devin)
-5. Fully quit and reopen Devin, pick a BYOK model
+macOS:
+1. Open the .dmg and drag Devin BYOK to Applications
+2. Open Devin BYOK from Applications
+3. Configure models/providers in GUI
+4. Click Start service, then fully restart Devin
+
+The app stays visible in the Dock and uses a deer icon.
+
+Windows:
+1. Run devin-byok-gui.exe
+2. Configure models/providers in GUI
+3. Click Start service, then fully restart Devin
 
 Stop: click Stop service in GUI (auto restore)
 

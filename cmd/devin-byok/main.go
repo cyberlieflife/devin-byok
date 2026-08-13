@@ -15,15 +15,15 @@ import (
 	"devin-byok/internal/config"
 	"devin-byok/internal/desktop"
 	"devin-byok/internal/devin"
+	"devin-byok/internal/extinstall"
 	"devin-byok/internal/localapi"
 	"devin-byok/internal/logx"
-	"devin-byok/internal/paths"
 	"devin-byok/internal/lsinstall"
-	"devin-byok/internal/extinstall"
+	"devin-byok/internal/paths"
 	"devin-byok/internal/platform"
 	"devin-byok/internal/update"
-	"devin-byok/internal/version"
 	"devin-byok/internal/upstream/openai"
+	"devin-byok/internal/version"
 )
 
 func main() {
@@ -110,11 +110,14 @@ func findConfig() string {
 
 func projectRoot() string {
 	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
+		dir := platform.ReleaseInstallDir(exe)
 		if _, err := os.Stat(filepath.Join(dir, "config.yaml")); err == nil {
 			return dir
 		}
 		if _, err := os.Stat(filepath.Join(dir, "scripts")); err == nil {
+			return dir
+		}
+		if _, err := os.Stat(platform.GUIPath(dir)); err == nil {
 			return dir
 		}
 	}
@@ -291,7 +294,6 @@ func mustDetect() {
 	logx.Infof("settings: %s", p.SettingsJSON)
 }
 
-
 func applyOnStart(cfgPath string) {
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
@@ -304,6 +306,17 @@ func applyOnStart(cfgPath string) {
 		return
 	}
 	logx.Infof("start apply ok portal=%s settings=%s", res.PortalURL, res.SettingsPath)
+	if err := applyDevKeys(); err != nil {
+		logx.Warnf("start apply dev keys failed: %v", err)
+	}
+}
+
+func applyDevKeys() error {
+	wpath, err := lsinstall.MaterializeWrapper()
+	if err != nil {
+		return err
+	}
+	return devin.ApplyDevKeys(wpath)
 }
 
 func restoreOnStop() {
@@ -314,7 +327,6 @@ func restoreOnStop() {
 	}
 	logx.Infof("stop restore ok: %v", res.Restored)
 }
-
 
 func mustUpdate(cfgPath string, args []string) {
 	cfg, err := config.Load(cfgPath)
@@ -367,6 +379,10 @@ func mustApply(cfgPath string) {
 		os.Exit(1)
 	}
 	logx.Infof("apply ok -> %s (%+v)", cfg.Server.PublicBase, res)
+	if err := applyDevKeys(); err != nil {
+		logx.Errorf("apply dev keys: %v", err)
+		os.Exit(1)
+	}
 }
 
 func mustRestore() {
@@ -537,20 +553,21 @@ func printToolChecklist() {
 		"Fail: doctor + localapi-rpc.jsonl + Devin.log\n")
 }
 
-
 func printCaptureHint() {
 	fmt.Print(`抓包: serve 后重启 Devin，看 work/capture/localapi-rpc.jsonl\n`)
 }
 
-
 func mustGUI() {
 	root := projectRoot()
-	gui := filepath.Join(root, platform.GUIName())
+	gui := platform.GUIPath(root)
 	if _, err := os.Stat(gui); err != nil {
 		logx.Errorf("missing %s - build: go build -o %s ./cmd/devin-byok-gui", gui, gui)
 		os.Exit(1)
 	}
 	cmd := exec.Command(gui)
+	if platform.IsDarwin() && filepath.Ext(gui) == ".app" {
+		cmd = exec.Command("open", gui)
+	}
 	cmd.Dir = root
 	if err := cmd.Start(); err != nil {
 		logx.Errorf("start gui: %v", err)
