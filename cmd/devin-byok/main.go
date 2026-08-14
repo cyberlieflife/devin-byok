@@ -300,15 +300,17 @@ func applyOnStart(cfgPath string) {
 		logx.Warnf("start apply skip (load config): %v", err)
 		return
 	}
-	res, err := devin.ApplyPortal(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys)
+	wpath, wrapperErr := lsinstall.MaterializeWrapper()
+	if wrapperErr != nil {
+		logx.Warnf("start wrapper failed: %v", wrapperErr)
+		return
+	}
+	res, err := devin.ApplyLocalRuntime(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys, wpath)
 	if err != nil {
 		logx.Warnf("start apply failed: %v", err)
 		return
 	}
 	logx.Infof("start apply ok portal=%s settings=%s", res.PortalURL, res.SettingsPath)
-	if err := applyDevKeys(); err != nil {
-		logx.Warnf("start apply dev keys failed: %v", err)
-	}
 }
 
 func applyDevKeys() error {
@@ -373,16 +375,17 @@ func mustApply(cfgPath string) {
 		logx.Errorf("load config: %v", err)
 		os.Exit(1)
 	}
-	res, err := devin.ApplyPortal(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys)
+	wrapperPath, err := lsinstall.MaterializeWrapper()
+	if err != nil {
+		logx.Errorf("materialize wrapper: %v", err)
+		os.Exit(1)
+	}
+	res, err := devin.ApplyLocalRuntime(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys, wrapperPath)
 	if err != nil {
 		logx.Errorf("apply: %v", err)
 		os.Exit(1)
 	}
 	logx.Infof("apply ok -> %s (%+v)", cfg.Server.PublicBase, res)
-	if err := applyDevKeys(); err != nil {
-		logx.Errorf("apply dev keys: %v", err)
-		os.Exit(1)
-	}
 }
 
 func mustRestore() {

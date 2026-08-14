@@ -34,6 +34,14 @@ func devinDataDirs() []string {
 	return out
 }
 
+func defaultDevinDataDir() string {
+	home := UserHomeDir()
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, "Library", "Application Support", "Devin")
+}
+
 func devinInstallCandidates() []string {
 	var cands []string
 	home := UserHomeDir()

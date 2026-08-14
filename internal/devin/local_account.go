@@ -139,13 +139,13 @@ func LocalAccountImported(cfg *config.File, wrapperPath string) (bool, string) {
 	portal := strings.TrimRight(strings.TrimSpace(cfg.Server.PublicBase), "/")
 	apiURL := portal + "/_route/api_server"
 	expected := map[string]any{
-		"devin.portalUrl":                      portal,
-		"windsurf.portalUrl":                   portal,
-		"codeium.apiServerUrl":                 apiURL,
-		"codeium.inferenceApiServerUrl":        apiURL,
-		"devin.multiTenantMode":                true,
-		"devin.cascade.enabled":                true,
-		"sync.enableSettings":                   false,
+		"devin.portalUrl":                     portal,
+		"windsurf.portalUrl":                  portal,
+		"codeium.apiServerUrl":                apiURL,
+		"codeium.inferenceApiServerUrl":       apiURL,
+		"devin.multiTenantMode":               true,
+		"devin.cascade.enabled":               true,
+		"sync.enableSettings":                 false,
 		"codeiumDev.languageServerBinaryPath": wrapperPath,
 	}
 	for key, value := range expected {

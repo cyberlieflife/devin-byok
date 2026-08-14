@@ -25,6 +25,12 @@ func DevinDataDirs() []string {
 	return devinDataDirs()
 }
 
+// DefaultDevinDataDir is the platform-standard user-data location. It may not
+// exist yet on a fresh Devin installation.
+func DefaultDevinDataDir() string {
+	return defaultDevinDataDir()
+}
+
 func DevinInstallCandidates() []string {
 	return devinInstallCandidates()
 }

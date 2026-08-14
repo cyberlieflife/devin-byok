@@ -75,9 +75,9 @@ func TestLocalAccountImportedPreservesRequiredSettingsContract(t *testing.T) {
 	}
 	for key, want := range map[string]any{
 		"codeiumDev.languageServerBinaryPath": "/tmp/devin-byok-wrapper",
-		"devin.multiTenantMode":                true,
-		"devin.cascade.enabled":                true,
-		"sync.enableSettings":                   false,
+		"devin.multiTenantMode":               true,
+		"devin.cascade.enabled":               true,
+		"sync.enableSettings":                 false,
 	} {
 		if settings[key] != want {
 			t.Fatalf("%s = %#v, want %#v", key, settings[key], want)

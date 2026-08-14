@@ -36,11 +36,31 @@ func devinDataDirs() []string {
 	return out
 }
 
-func devinInstallCandidates() []string {
-	cands := []string{`D:\Devin`, `C:\Program Files\Devin`, `C:\Program Files (x86)\Devin`}
-	if v := os.Getenv("DEVIN_INSTALL_DIR"); v != "" {
-		cands = append([]string{v}, cands...)
+func defaultDevinDataDir() string {
+	if appdata := strings.TrimSpace(os.Getenv("APPDATA")); appdata != "" {
+		return filepath.Join(appdata, "Devin")
 	}
+	if home := UserHomeDir(); home != "" {
+		return filepath.Join(home, ".devin")
+	}
+	return ""
+}
+
+func devinInstallCandidates() []string {
+	cands := []string{}
+	if v := os.Getenv("DEVIN_INSTALL_DIR"); v != "" {
+		cands = append(cands, v)
+	}
+	if local := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); local != "" {
+		cands = append(cands, filepath.Join(local, "Programs", "Devin"), filepath.Join(local, "Devin"))
+	}
+	if pf := strings.TrimSpace(os.Getenv("ProgramFiles")); pf != "" {
+		cands = append(cands, filepath.Join(pf, "Devin"))
+	}
+	if pf86 := strings.TrimSpace(os.Getenv("ProgramFiles(x86)")); pf86 != "" {
+		cands = append(cands, filepath.Join(pf86, "Devin"))
+	}
+	cands = append(cands, `C:\Program Files\Devin`, `C:\Program Files (x86)\Devin`, `D:\Devin`)
 	return cands
 }
 
@@ -79,7 +99,12 @@ func killCommand(pid string) []string {
 }
 
 func defaultInstallDir() string {
-	return `D:\Devin`
+	for _, candidate := range devinInstallCandidates() {
+		if IsValidInstallDir(candidate) {
+			return normalizeInstallDir(candidate)
+		}
+	}
+	return ""
 }
 
 func normalizeInstallDir(dir string) string {
