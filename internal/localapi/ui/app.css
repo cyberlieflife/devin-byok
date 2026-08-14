@@ -25,7 +25,7 @@ body{margin:0;background:var(--canvas);color:var(--ink);font-family:var(--font);
 .btn-primary:hover{background:var(--primary-active)}
 .btn-secondary{background:var(--card);color:var(--ink);border-color:var(--hairline-strong,#cfcdc4)}
 .btn-nav{min-width:62px;transition:background .16s ease,border-color .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease}
-.btn-nav:hover{border-color:#e59b7d;background:#fff8f3}
+.btn-nav:not(.active):hover{border-color:#e59b7d;background:#fff8f3}
 .btn-nav:focus-visible{outline:3px solid rgba(245,78,0,.22);outline-offset:2px}
 .btn-nav.active{background:linear-gradient(135deg,#ff6a1a 0%,var(--primary) 58%,#df3f00 100%);border-color:#df3f00;color:#fff;box-shadow:0 3px 8px rgba(213,63,0,.2);font-weight:650;transform:translateY(-1px)}
 .btn-nav.active:hover{background:linear-gradient(135deg,#ff762f 0%,#e94300 58%,#c93600 100%)}
