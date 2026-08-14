@@ -28,15 +28,15 @@ func isModelIdentityQuestion(text string) bool {
 	if normalized == "" {
 		return false
 	}
+	// 结构完整的身份问句或强身份专有词：命中即拦截（这些模式本身无技术歧义）。
+	// "真实底模/底层模型" 等专有词几乎只出现在身份提问中，单独出现也拦截；
+	// 而 "模型/架构" 等弱词不在此列，避免误伤技术讨论。
 	direct := []string{
-		"你是谁", "您是谁", "你叫什么", "你的名字", "你是什么", "你是哪位",
-		"什么模型", "哪个模型", "哪种模型", "模型名称", "模型名字", "模型版本",
-		"真实模型", "实际模型", "底层模型", "底模", "基座模型", "大模型", "语言模型",
-		"谁训练的", "谁开发的", "哪家公司", "哪个公司", "谁创造了你", "谁做的你",
-		"whatmodel", "whichmodel", "modelname", "modelversion", "underlyingmodel",
-		"basemodel", "actualmodel", "realmodel", "whatpowersyou", "whatllm",
-		"whoareyou", "what are you", "whomadeyou", "whobuiltyou", "youridentity",
-		"que modelo", "qué modelo", "quelmodele", "quel modèle", "welchesmodell",
+		"你是谁", "您是谁", "你叫什么", "你的名字", "你是哪位",
+		"谁训练的", "谁开发的", "谁创造了你", "谁做的你",
+		"真实底模", "实际底模", "底模是什么", "底层模型",
+		"whatpowersyou", "whoareyou", "what are you", "whomadeyou", "whobuiltyou", "youridentity",
+		"que modelo", "qué modelo", "modelo eres", "quelmodele", "quel modèle", "welchesmodell",
 	}
 	for _, marker := range direct {
 		if strings.Contains(normalized, normalizeIdentityText(marker)) {
@@ -44,9 +44,12 @@ func isModelIdentityQuestion(text string) bool {
 		}
 	}
 
+	// 组合规则：身份词（模型/底模/架构…）必须同时出现自称代词（你/您/you/who），
+	// 才判定为身份提问。宽泛的 "什么模型/模型名称" 等二义子串不再单独触发——
+	// 例如 "我的模型为什么崩溃"（无"你"）是真实技术问题，不应被本地身份应答拦截。
 	identityWords := []string{"model", "llm", "模型", "底模", "身份", "identity", "architecture", "架构"}
-	questionWords := []string{"what", "which", "name", "version", "real", "actual", "under", "谁", "什么", "哪个", "名称", "版本", "真实", "实际", "底层"}
-	return containsAny(normalized, identityWords) && containsAny(normalized, questionWords)
+	selfRefWords := []string{"你", "您", "you", "who", "your", "你的", "您的"}
+	return containsAny(normalized, identityWords) && containsAny(normalized, selfRefWords)
 }
 
 func normalizeIdentityText(text string) string {

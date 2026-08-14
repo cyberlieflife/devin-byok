@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -38,8 +39,12 @@ func TestEnsureLocalAccountAtCreatesAndReusesIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("mode = %o, want 600", got)
+	// 权限位（0600）仅在 Unix 上生效：Go 在 Windows 上对 os.Chmod 的
+	// POSIX 权限位是 no-op（文件权限由 NTFS ACL 管理），此处按平台跳过断言。
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("mode = %o, want 600", got)
+		}
 	}
 
 	second, created, err := ensureLocalAccountAt(path, bytes.NewReader(nil), now.Add(time.Hour))

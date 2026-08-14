@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"devin-byok/internal/config"
+	"devin-byok/internal/promptstore"
+	"devin-byok/internal/upstream/openai"
 )
 
 func TestEvaluationHasAtLeastTenDeterministicCases(t *testing.T) {
@@ -67,5 +69,46 @@ func TestScoreRejectsStrictFormatNoise(t *testing.T) {
 	bad := score(tc, "The answer is 323")
 	if scorePercent(good) <= scorePercent(bad) {
 		t.Fatalf("strict format noise was not penalized: good=%+v bad=%+v", good, bad)
+	}
+}
+
+// TestCodeCaseComposerUsesFullVerifiedProfiles 防止回归：code 评测的
+// ComposeContext.UserText 不再包含 "Return only the code." 等 strict 触发词，
+// 否则 core-reliability/verification/coding-execution 会被跳过，baseline 与
+// optimized 的差异退化为两个短契约，评测无法证明 composer 主干的价值。
+func TestCodeCaseComposerUsesFullVerifiedProfiles(t *testing.T) {
+	for _, tc := range evaluationCases() {
+		if tc.Code == nil {
+			continue
+		}
+		prompt := codePrompt(tc.Code.Function, tc.Code.Contract)
+		composerText := prompt
+		if tc.Code != nil {
+			composerText = "实现一个 Go 函数：" + tc.Code.Function + "。需要正确处理空输入、边界值和非法输入，并补充测试。"
+		}
+		_ = prompt
+		positive := true
+		composed := promptstore.ComposeMessages([]openai.ChatMessage{
+			{Role: "system", Content: "You are a capable software engineering assistant."},
+			{Role: "user", Content: prompt},
+		}, promptstore.ComposeContext{
+			Route: "chat", ModelID: "model", Family: "family", UserText: composerText,
+			QualityMode: "verified", QualityEnabled: &positive,
+		})
+		for _, want := range []string{"core-reliability", "verification", "coding-execution"} {
+			found := false
+			for _, id := range composed.ProfileIDs {
+				if id == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("case %s: profile %q missing from verified composer (strict short-circuit regression?) profiles=%v", tc.Name, want, composed.ProfileIDs)
+			}
+		}
+		if composed.Task != "coding" {
+			t.Fatalf("case %s: task = %q, want coding", tc.Name, composed.Task)
+		}
 	}
 }

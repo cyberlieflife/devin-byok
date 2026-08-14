@@ -93,11 +93,14 @@ func bundledCLIPath(exe string) string {
 }
 
 func assetSuffix() string {
+	// 命名必须与 scripts/pack-release.sh 的产物一致（devin-byok-<ver>-darwin-<GOARCH>.dmg），
+	// 否则 Intel Mac 更新器匹配不到资产。历史上曾返回 darwin-x64.dmg 与脚本的
+	// darwin-amd64.dmg 不一致，导致 x64 资产永远匹配失败。
 	switch runtime.GOARCH {
-	case "arm64":
+	case "arm64", "aarch64":
 		return "darwin-arm64.dmg"
 	default:
-		return "darwin-x64.dmg"
+		return "darwin-amd64.dmg"
 	}
 }
 

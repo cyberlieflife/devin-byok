@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -160,7 +161,44 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/_route/api_server", s.handleConnectRPC)
 	s.registerUIRoutes(mux)
 	mux.HandleFunc("/", s.handleCatchAll)
-	return mux
+	// 管理 API 的 CSRF/Origin 防护：浏览器管理页 fetch 会携带
+	// Origin: http://127.0.0.1:8787；任意网页发起的跨站请求携带
+	// 恶意 Origin。规则：带 Origin/Referer 时 host 必须与本服务一致，
+	// 否则拒绝；无浏览器头（curl、Devin 语言服务器等本地客户端）放行。
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") && !s.originAllowed(r) {
+			http.Error(w, "forbidden origin", http.StatusForbidden)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+// originAllowed 校验管理 API 请求的浏览器来源。有 Origin 或 Referer
+// 时二者 host 均须与本地服务一致（127.0.0.1 / localhost 同端口），
+// 防止任意网页借浏览器跨站请求驱动本地状态变更（CSRF/DNS rebinding）。
+func (s *Server) originAllowed(r *http.Request) bool {
+	cfg := s.GetConfig()
+	allowed := []string{
+		"http://127.0.0.1:" + strconv.Itoa(cfg.Server.Port),
+		"http://localhost:" + strconv.Itoa(cfg.Server.Port),
+	}
+	if h := strings.TrimSpace(cfg.Server.Host); h != "" && h != "0.0.0.0" && h != "::" {
+		allowed = append(allowed, "http://"+h+":"+strconv.Itoa(cfg.Server.Port))
+	}
+	check := func(value string) bool {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return true // 无浏览器来源头（本地 CLI/LS），放行
+		}
+		for _, a := range allowed {
+			if strings.EqualFold(value, a) {
+				return true
+			}
+		}
+		return false
+	}
+	return check(r.Header.Get("Origin")) && check(r.Header.Get("Referer"))
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -188,7 +226,8 @@ func (s *Server) handleOpenAIProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	body, _ := io.ReadAll(r.Body)
+	// 限制请求体体积，防止异常客户端提交超大 body 耗尽内存（与 serveRPC 的 16MB 对齐）。
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 16<<20))
 	var envelope struct {
 		Model string `json:"model"`
 	}
@@ -237,7 +276,9 @@ func (s *Server) handleOpenAIProxy(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set(k, v)
 	}
 	logx.Infof("openai proxy model=%s upstream_model=%s base=%s", model.ID, prov.UpstreamModel, truncate(prov.BaseURL, 80))
-	resp, err := http.DefaultClient.Do(req)
+	// 代理请求必须带超时：DefaultClient 无 Timeout，上游挂起时 handler 永久阻塞泄漏 goroutine。
+	proxyClient := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := proxyClient.Do(req)
 	if err != nil {
 		http.Error(w, err.Error(), 502)
 		return

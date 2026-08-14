@@ -101,8 +101,17 @@ func evaluateOne(client *openai.Client, cfg *config.File, modelID string, prov c
 		{Role: "user", Content: prompt},
 	}
 	positive := true
+	// ComposerContext.UserText 只用于任务分类与严格输出检测，不影响发往上游的消息。
+	// 原 codePrompt 含 "Return only the code." / "no explanations" / "ONLY the" 等措辞，
+	// 会命中 DetectStrictOutput 的宽匹配 markers，使 verified/reliability profile 被跳过，
+	// 评测退化到 baseline 与 optimized 只差两个短契约。这里为 code 任务单独提供
+	// 不含触发词且能识别为 coding 任务的描述文本，使评测真正覆盖 composer 主干。
+	composerText := prompt
+	if tc.Code != nil {
+		composerText = "实现一个 Go 函数：" + tc.Code.Function + "。需要正确处理空输入、边界值和非法输入，并补充测试。"
+	}
 	optimized := promptstore.ComposeMessages(baseMessages, promptstore.ComposeContext{
-		Route: "chat", ModelID: modelID, Family: prov.FamilyUID, UserText: prompt,
+		Route: "chat", ModelID: modelID, Family: prov.FamilyUID, UserText: composerText,
 		QualityMode: "verified", QualityEnabled: &positive,
 	})
 	maxTokens := 1600

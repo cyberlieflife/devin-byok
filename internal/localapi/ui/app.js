@@ -254,17 +254,28 @@ async function refreshFamilies(){
         <div class="muted small mono">${escapeHtml(f.uid)}</div>
         <div class="muted small" style="margin-top:6px">${escapeHtml(providerLabel(f.provider))} · ctx ${f.context_window?formatCompact(f.context_window):'-'} · max_out ${f.max_tokens?formatCompact(f.max_tokens):'-'}</div>
         <div class="muted small mono" style="margin-top:4px">${escapeHtml(f.base_url||'(no base_url)')}</div>
-        <div class="muted small">key: ${f.api_key_set?(f.api_key_masked||'****'):'未设置'} · model: ${escapeHtml(f.upstream_model||'-')}</div>
+        <div class="muted small">key: ${escapeHtml(f.api_key_set?(f.api_key_masked||'****'):'未设置')} · model: ${escapeHtml(f.upstream_model||'-')}</div>
         <div class="chip-row">
           ${(f.variants||[]).map(v=>`<span class="chip ${v.thinking==='medium'?'med':''}">${escapeHtml(v.thinking||'?')} · ${escapeHtml(v.id)}</span>`).join('')}
         </div>
         <div class="muted small">upstream: ${escapeHtml((f.variants&&f.variants[0]&&f.variants[0].upstream_model)||'-')}</div>
         <div class="row gap" style="margin-top:12px">
-          <button class="btn btn-secondary" onclick="editFamilyByUid('${escapeHtml(f.uid)}')">编辑</button>
-          <button class="btn btn-secondary" onclick="copyFamily('${escapeHtml(f.uid)}')">复制</button>
-          <button class="btn btn-danger" onclick="deleteFamily('${escapeHtml(f.uid)}')">删除</button>
+          <button class="btn btn-secondary" type="button" data-fuid="${escapeHtml(f.uid)}">编辑</button>
+          <button class="btn btn-secondary" type="button" data-fuid="${escapeHtml(f.uid)}">复制</button>
+          <button class="btn btn-danger" type="button" data-fuid="${escapeHtml(f.uid)}">删除</button>
         </div>
       </div>`).join('');
+    // 家族卡片按钮：data-* + addEventListener 绑定，避免属性内联 JS 的双上下文转义失效
+    box.querySelectorAll('button[data-act]').forEach(btn=>{
+      const uid=btn.getAttribute('data-fuid');
+      const act=btn.getAttribute('data-act');
+      btn.addEventListener('click',()=>{
+        if(!uid) return;
+        if(act==='edit'){editFamilyByUid(uid);}
+        else if(act==='copy'){copyFamily(uid);}
+        else if(act==='del'){deleteFamily(uid);}
+      });
+    });
   }catch(e){box.innerHTML='<div class="card bad">加载失败: '+escapeHtml(e.message)+'</div>'}
 }
 function formPatch(){

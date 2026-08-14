@@ -79,6 +79,7 @@ func scheduleApplyArtifact(artifactPath, installDir, guiName, tmp string) (strin
 set -euo pipefail
 DMG=%s
 DST=%s
+GUI=%s
 APP="Devin BYOK.app"
 MOUNT=$(mktemp -d "${TMPDIR:-/tmp}/devin-byok-mount.XXXXXX")
 cleanup() {
@@ -107,7 +108,7 @@ chmod +x "$DST/$APP/Contents/MacOS/$GUI"
 echo "[devin-byok] update applied"
 nohup open "$DST/$APP" >/dev/null 2>&1 &
 echo "[devin-byok] done"
-`, shellQuote(artifactPath), shellQuote(installDir))
+`, shellQuote(artifactPath), shellQuote(installDir), shellQuote(guiName))
 	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
 		return "", err
 	}

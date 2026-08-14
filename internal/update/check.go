@@ -192,7 +192,9 @@ func DownloadAndSchedule(ctx context.Context, cfg Config, current string, instal
 	}
 	tmp := filepath.Join(os.TempDir(), "devin-byok-update-"+strconv.FormatInt(time.Now().Unix(), 10))
 	_ = os.MkdirAll(tmp, 0o755)
-	artifactPath := filepath.Join(tmp, check.AssetName)
+	// AssetName 来自远端 release 资产名，可能被仓库维护者以外的来源注入
+	// ".." 或反斜杠等路径片段；只取 Base 防止写出 tmp 目录。
+	artifactPath := filepath.Join(tmp, filepath.Base(check.AssetName))
 	setProgress("downloading", 0, 0, 0, "正在下载 "+check.Latest+"…")
 	if err := downloadFileProgress(ctx, check.AssetURL, artifactPath); err != nil {
 		setProgress("error", 0, 0, 0, "下载失败: "+err.Error())
@@ -201,20 +203,28 @@ func DownloadAndSchedule(ctx context.Context, cfg Config, current string, instal
 	if check.SHA256URL != "" {
 		sumPath := artifactPath + ".sha256"
 		setProgress("verifying", 95, 0, 0, "正在校验 SHA256…")
-		if err := downloadFile(ctx, check.SHA256URL, sumPath); err == nil {
-			want, _ := os.ReadFile(sumPath)
-			got, err := fileSHA256(artifactPath)
-			if err != nil {
-				return ApplyResult{OK: false, Message: err.Error()}, err
-			}
-			w := strings.ToLower(strings.TrimSpace(string(want)))
-			// 允许 "HASH" 或 "HASH  filename"
-			if i := strings.IndexAny(w, " \t"); i > 0 {
-				w = w[:i]
-			}
-			if w != "" && w != strings.ToLower(got) {
-				return ApplyResult{OK: false, Message: "sha256 mismatch"}, fmt.Errorf("sha256 mismatch want=%s got=%s", w, got)
-			}
+		if err := downloadFile(ctx, check.SHA256URL, sumPath); err != nil {
+			setProgress("error", 0, 0, 0, "校验和下载失败: "+err.Error())
+			return ApplyResult{OK: false, Message: "校验和下载失败: " + err.Error()}, err
+		}
+		want, err := os.ReadFile(sumPath)
+		if err != nil {
+			return ApplyResult{OK: false, Message: err.Error()}, err
+		}
+		got, err := fileSHA256(artifactPath)
+		if err != nil {
+			return ApplyResult{OK: false, Message: err.Error()}, err
+		}
+		w := strings.ToLower(strings.TrimSpace(string(want)))
+		// 允许 "HASH" 或 "HASH  filename"
+		if i := strings.IndexAny(w, " \t"); i > 0 {
+			w = w[:i]
+		}
+		if w == "" {
+			return ApplyResult{OK: false, Message: "校验和为空"}, fmt.Errorf("sha256 file is empty")
+		}
+		if w != strings.ToLower(got) {
+			return ApplyResult{OK: false, Message: "sha256 mismatch"}, fmt.Errorf("sha256 mismatch want=%s got=%s", w, got)
 		}
 	}
 	guiName := platform.GUIName()
