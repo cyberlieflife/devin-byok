@@ -1,4 +1,4 @@
-﻿package localapi
+package localapi
 
 import (
 	"context"
@@ -14,14 +14,15 @@ import (
 	"devin-byok/internal/config"
 	"devin-byok/internal/desktop"
 	"devin-byok/internal/devin"
+	"devin-byok/internal/extinstall"
 	"devin-byok/internal/ideinject"
 	"devin-byok/internal/logx"
-	"devin-byok/internal/version"
-	"devin-byok/internal/update"
 	"devin-byok/internal/lsinstall"
+	"devin-byok/internal/platform"
 	"devin-byok/internal/promptstore"
-	"devin-byok/internal/extinstall"
+	"devin-byok/internal/update"
 	"devin-byok/internal/upstream/openai"
+	"devin-byok/internal/version"
 )
 
 //go:embed ui/*
@@ -45,6 +46,10 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	})))
 	mux.HandleFunc("/api/status", s.handleAPIStatus)
 	mux.HandleFunc("/api/config", s.handleAPIConfig)
+	mux.HandleFunc("/api/local-account", s.handleAPILocalAccount)
+	mux.HandleFunc("/api/devin", s.handleAPIDevin)
+	mux.HandleFunc("/api/devin/restart", s.handleAPIDevinRestart)
+	mux.HandleFunc("/api/chats/export", s.handleAPIChatExport)
 	mux.HandleFunc("/api/test-upstream", s.handleAPITestUpstream)
 	mux.HandleFunc("/api/control/", s.handleAPIControl)
 	mux.HandleFunc("/api/desktop", s.handleAPIDesktop)
@@ -54,7 +59,66 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/update/progress", s.handleAPIUpdateProgress)
 	s.registerExtraAPI(mux)
 	mux.HandleFunc("/api/prompts", s.handleAPIPrompts)
+	mux.HandleFunc("/api/prompts/preview", s.handleAPIPromptPreview)
 	mux.HandleFunc("/api/extension", s.handleAPIExtension)
+}
+
+// handleAPIPromptPreview returns metadata and short system previews from the
+// same Composer used by real requests. It never returns credentials or the
+// full user/project context.
+func (s *Server) handleAPIPromptPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	cfg := s.GetConfig()
+	route := r.URL.Query().Get("route")
+	model := r.URL.Query().Get("model")
+	task := r.URL.Query().Get("task")
+	quality := r.URL.Query().Get("quality_mode")
+	if model == "" {
+		model = cfg.DefaultModelID()
+	}
+	if m, ok := cfg.ResolveModelUID(model); ok {
+		model = m.ID
+	}
+	prov, _ := cfg.ResolveProvider(model)
+	if task == "" {
+		task = "general"
+	}
+	base := []openai.ChatMessage{{Role: "system", Content: "Upstream system prompt preview"}, {Role: "user", Content: "preview"}}
+	composed := promptstore.ComposeMessages(base, promptstore.ComposeContext{
+		Route: route, ModelID: model, ModelName: modelDisplayName(cfg, model), Family: prov.FamilyUID, Task: task,
+		QualityMode: quality, HasTools: route == "chat", HasWorkspace: false, QualityEnabled: boolPtr(cfg.Quality.Enabled),
+	})
+	type messagePreview struct {
+		Role    string `json:"role"`
+		Preview string `json:"preview"`
+	}
+	previews := make([]messagePreview, 0, len(composed.Messages))
+	for _, msg := range composed.Messages {
+		if msg.Role != "system" {
+			continue
+		}
+		text := openai.TextContent(msg.Content)
+		if len([]rune(text)) > 2000 {
+			text = string([]rune(text)[:2000]) + "…"
+		}
+		previews = append(previews, messagePreview{Role: msg.Role, Preview: text})
+	}
+	writeJSON(w, map[string]any{
+		"ok": true, "route": composed.Route, "model": model, "task": composed.Task,
+		"quality_mode": composed.QualityMode, "profile_ids": composed.ProfileIDs,
+		"warnings": composed.Warnings, "prompt_hash": composed.Hash,
+		"estimated_tokens": estimateTokens(strings.Join(func() []string {
+			out := make([]string, 0, len(composed.Messages))
+			for _, m := range composed.Messages {
+				out = append(out, openai.TextContent(m.Content))
+			}
+			return out
+		}(), "\n")),
+		"messages": previews,
+	})
 }
 
 func (s *Server) getConfigPath() string {
@@ -66,27 +130,46 @@ func (s *Server) getConfigPath() string {
 func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := s.GetConfig()
 	wrapper := false
-	real := filepath.Join(cfg.Devin.InstallDir, "resources", "app", "extensions", "windsurf", "bin", "language_server_windows_x64.real.exe")
+	real := filepath.Join(platform.ExtensionsBinDir(cfg.Devin.InstallDir), platform.RealLanguageServerName())
 	if _, err := os.Stat(real); err == nil {
 		wrapper = true
 	}
+	accountExists := false
+	accountConfigured := false
+	serviceActive := false
+	if account, err := devin.LoadLocalAccount(); err == nil {
+		accountExists = true
+		accountConfigured = cfg.Features.PureLocal && cfg.Auth.FakeUserID == account.ID && cfg.Auth.FakeAPIKey == account.APIKey
+		wrapperPath := filepath.Join(platform.DataDir(), "bin", platform.WrapperExeName())
+		imported, _ := devin.LocalAccountImported(cfg, wrapperPath)
+		serviceActive = accountConfigured && imported
+	}
+	process := devin.ProcessStatus(cfg.Devin.InstallDir)
 	writeJSON(w, map[string]any{
-		"ok":            true,
-		"time":          time.Now().Format(time.RFC3339),
-		"portal":        cfg.Server.PublicBase,
-		"api":           cfg.Server.PublicBase + cfg.APIBasePath(),
-		"default_model": cfg.DefaultModelID(),
-		"models":        cfg.ModelList(),
-		"pure_local":    cfg.Features.PureLocal,
-		"stream":        cfg.Features.EnableStream,
-		"cascade_tools": cfg.Features.EnableCascadeTools,
-		"tools_mode":    cfg.ToolsMode(),
-		"tools_timeout": cfg.ResolveChatTimeoutSec(true),
-		"wrapper":       wrapper,
-		"upstream":      config.NormalizeChatCompletionsURL(cfg.Upstream.BaseURL),
-		"config_path":   s.getConfigPath(),
-		"cache_enabled":  cfg.Cache.Enabled,
-		"cache_ttl_sec":  cfg.Cache.TTLSec,
+		"ok":                 true,
+		"management_online":  true,
+		"service_active":     serviceActive,
+		"applied":            serviceActive,
+		"account_exists":     accountExists,
+		"account_imported":   accountConfigured && serviceActive,
+		"devin_running":      process.Running,
+		"restart_required":   s.restartRequired.Load(),
+		"time":               time.Now().Format(time.RFC3339),
+		"portal":             cfg.Server.PublicBase,
+		"api":                cfg.Server.PublicBase + cfg.APIBasePath(),
+		"default_model":      cfg.DefaultModelID(),
+		"default_model_name": modelDisplayName(cfg, cfg.DefaultModelID()),
+		"models":             cfg.ModelList(),
+		"pure_local":         cfg.Features.PureLocal,
+		"stream":             cfg.Features.EnableStream,
+		"cascade_tools":      cfg.Features.EnableCascadeTools,
+		"tools_mode":         cfg.ToolsMode(),
+		"tools_timeout":      cfg.ResolveChatTimeoutSec(true),
+		"wrapper":            wrapper,
+		"upstream":           config.NormalizeChatCompletionsURL(cfg.Upstream.BaseURL),
+		"config_path":        s.getConfigPath(),
+		"cache_enabled":      cfg.Cache.Enabled,
+		"cache_ttl_sec":      cfg.Cache.TTLSec,
 	})
 }
 
@@ -95,39 +178,42 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		cfg := s.GetConfig()
 		writeJSON(w, map[string]any{
-			"base_url":             cfg.Upstream.BaseURL,
-			"api_key_masked":       config.MaskAPIKey(cfg.Upstream.APIKey),
-			"api_key_set":          strings.TrimSpace(cfg.Upstream.APIKey) != "",
-			"model":                cfg.Upstream.Model,
-			"timeout_sec":          cfg.Upstream.TimeoutSec,
-			"tools_mode":           cfg.ToolsMode(),
-			"tools_timeout_sec":    cfg.Tools.TimeoutSec,
-			"enable_stream":        cfg.Features.EnableStream,
-			"enable_cascade_tools": cfg.Features.EnableCascadeTools,
-			"pure_local":           cfg.Features.PureLocal,
-			"enable_deepwiki":      cfg.Features.EnableDeepWiki,
-			"enable_codemap":       cfg.Features.EnableCodeMap,
-			"deepwiki_model":            cfg.Features.DeepWikiModel,
-			"codemap_model":             cfg.Features.CodeMapModel,
-			"codemap_fast_model":        cfg.Features.CodeMapFastModel,
-			"codemap_smart_model":       cfg.Features.CodeMapSmartModel,
-			"command_model":            cfg.Features.CommandModel,
-			"title_model":              cfg.Features.TitleModel,
-			"fast_context_model":       cfg.Features.FastContextModel,
-			"enable_fast_context":      cfg.Features.EnableFastContext,
-			"deepwiki_model_resolved":   cfg.FeatureModelID("deepwiki"),
-			"codemap_model_resolved":    cfg.FeatureModelID("codemap"),
+			"base_url":                     cfg.Upstream.BaseURL,
+			"api_key_masked":               config.MaskAPIKey(cfg.Upstream.APIKey),
+			"api_key_set":                  strings.TrimSpace(cfg.Upstream.APIKey) != "",
+			"model":                        cfg.Upstream.Model,
+			"timeout_sec":                  cfg.Upstream.TimeoutSec,
+			"tools_mode":                   cfg.ToolsMode(),
+			"tools_timeout_sec":            cfg.Tools.TimeoutSec,
+			"enable_stream":                cfg.Features.EnableStream,
+			"enable_cascade_tools":         cfg.Features.EnableCascadeTools,
+			"pure_local":                   cfg.Features.PureLocal,
+			"enable_deepwiki":              cfg.Features.EnableDeepWiki,
+			"enable_codemap":               cfg.Features.EnableCodeMap,
+			"deepwiki_model":               cfg.Features.DeepWikiModel,
+			"codemap_model":                cfg.Features.CodeMapModel,
+			"codemap_fast_model":           cfg.Features.CodeMapFastModel,
+			"codemap_smart_model":          cfg.Features.CodeMapSmartModel,
+			"command_model":                cfg.Features.CommandModel,
+			"title_model":                  cfg.Features.TitleModel,
+			"fast_context_model":           cfg.Features.FastContextModel,
+			"enable_fast_context":          cfg.Features.EnableFastContext,
+			"deepwiki_model_resolved":      cfg.FeatureModelID("deepwiki"),
+			"codemap_model_resolved":       cfg.FeatureModelID("codemap"),
 			"codemap_fast_model_resolved":  cfg.FeatureModelID("codemap_fast"),
 			"codemap_smart_model_resolved": cfg.FeatureModelID("codemap_smart"),
-			"command_model_resolved":     cfg.FeatureModelID("command"),
-			"title_model_resolved":       cfg.FeatureModelID("title"),
-			"fast_context_model_resolved": cfg.FeatureModelID("fast_context"),
-			"default_model":        cfg.DefaultModelID(),
-			"models":               cfg.ModelList(),
-			"config_path":          s.getConfigPath(),
-			"update_enabled":       cfg.Update.Enabled,
-			"update_auto_apply":    cfg.Update.AutoApply,
-			"update_repo":          cfg.Update.Repo,
+			"command_model_resolved":       cfg.FeatureModelID("command"),
+			"title_model_resolved":         cfg.FeatureModelID("title"),
+			"fast_context_model_resolved":  cfg.FeatureModelID("fast_context"),
+			"default_model":                cfg.DefaultModelID(),
+			"models":                       cfg.ModelList(),
+			"config_path":                  s.getConfigPath(),
+			"update_enabled":               cfg.Update.Enabled,
+			"update_auto_apply":            cfg.Update.AutoApply,
+			"update_repo":                  cfg.Update.Repo,
+			"quality_enabled":              cfg.Quality.Enabled,
+			"quality_mode":                 cfg.QualityMode(),
+			"max_verification_rounds":      cfg.Quality.MaxVerificationRounds,
 		})
 	case http.MethodPut, http.MethodPost:
 		var patch config.GUIPatch
@@ -209,6 +295,134 @@ func (s *Server) handleAPITestUpstream(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "text": text})
 }
 
+func localAccountResponse(cfg *config.File, account *devin.LocalAccount, created bool) map[string]any {
+	response := map[string]any{
+		"ok":             true,
+		"created":        created,
+		"account_exists": account != nil,
+		"imported":       false,
+		"need_restart":   false,
+		"account_path":   devin.LocalAccountPath(),
+	}
+	if account == nil {
+		response["message"] = "尚未创建本地虚拟账户"
+		return response
+	}
+	wrapperPath := filepath.Join(platform.DataDir(), "bin", platform.WrapperExeName())
+	imported, message := devin.LocalAccountImported(cfg, wrapperPath)
+	configured := cfg.Features.PureLocal &&
+		cfg.Auth.FakeUserID == account.ID &&
+		cfg.Auth.FakeName == account.Name &&
+		cfg.Auth.FakeEmail == account.Email &&
+		cfg.Auth.FakeAPIKey == account.APIKey
+	response["id"] = account.ID
+	response["name"] = account.Name
+	response["email"] = account.Email
+	response["api_key_masked"] = config.MaskAPIKey(account.APIKey)
+	response["created_at"] = account.CreatedAt
+	response["configured"] = configured
+	response["imported"] = configured && imported
+	response["need_restart"] = configured && imported
+	response["message"] = message
+	return response
+}
+
+func applyLocalRuntime(cfg *config.File) error {
+	wrapperPath, err := lsinstall.MaterializeWrapper()
+	if err != nil {
+		return err
+	}
+	if _, err := devin.ApplyLocalRuntime(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys, wrapperPath); err != nil {
+		return err
+	}
+	if _, err := extinstall.InstallFromFS(extinstall.ExtFS, extinstall.ExtRoot); err != nil {
+		return err
+	}
+	return extinstall.Enable()
+}
+
+func (s *Server) handleAPILocalAccount(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		account, err := devin.LoadLocalAccount()
+		if err != nil {
+			if os.IsNotExist(err) {
+				writeJSON(w, localAccountResponse(s.GetConfig(), nil, false))
+				return
+			}
+			writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+			return
+		}
+		writeJSON(w, localAccountResponse(s.GetConfig(), account, false))
+	case http.MethodPost:
+		account, created, err := devin.EnsureLocalAccount()
+		if err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+			return
+		}
+		cfg, err := devin.ApplyLocalAccountToConfig(s.getConfigPath(), account)
+		if err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": "保存本地账户失败: " + err.Error()})
+			return
+		}
+		if err := applyLocalRuntime(cfg); err != nil {
+			writeJSON(w, map[string]any{
+				"ok": false, "created": created,
+				"message": "账户已创建，但导入 Devin 失败: " + err.Error(),
+			})
+			return
+		}
+		if err := s.ReloadConfig(); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": "已导入，但配置重载失败: " + err.Error()})
+			return
+		}
+		s.restartRequired.Store(true)
+		response := localAccountResponse(cfg, account, created)
+		response["message"] = "本地虚拟账户已导入，请完全退出并重启 Devin"
+		writeJSON(w, response)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleAPIDevin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, devin.ProcessStatus(s.GetConfig().Devin.InstallDir))
+}
+
+func (s *Server) handleAPIDevinRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	result, err := devin.Restart(s.GetConfig().Devin.InstallDir)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+		return
+	}
+	s.restartRequired.Store(false)
+	writeJSON(w, map[string]any{"ok": true, "running": result.Running, "message": result.Message})
+}
+
+func (s *Server) handleAPIChatExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	result, err := devin.ExportChats("")
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ok": true, "message": result.Message, "path": result.Path,
+		"file_count": result.FileCount, "size": result.Size,
+	})
+}
+
 func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", 405)
@@ -218,20 +432,26 @@ func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
 	cfg := s.GetConfig()
 	switch action {
 	case "start":
-		// 单 GUI / 内嵌模式：服务已在本进程，仅 apply portal + 启用提示词扩展
-		if _, err := devin.ApplyPortal(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys); err != nil {
+		account, _, err := devin.EnsureLocalAccount()
+		if err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": "创建本地账户失败: " + err.Error()})
+			return
+		}
+		cfg, err = devin.ApplyLocalAccountToConfig(s.getConfigPath(), account)
+		if err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": "保存本地账户失败: " + err.Error()})
+			return
+		}
+		if err := applyLocalRuntime(cfg); err != nil {
 			writeJSON(w, map[string]any{"ok": false, "message": "apply 失败: " + err.Error()})
 			return
 		}
-		if err := ideinject.ApplyContextUsageDonut(cfg.Devin.InstallDir); err != nil {
-			logx.Warnf("ideinject context-usage: %v", err)
+		if err := s.ReloadConfig(); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": "已启用，但配置重载失败: " + err.Error()})
+			return
 		}
-		if _, err := extinstall.InstallFromFS(extinstall.ExtFS, extinstall.ExtRoot); err != nil {
-			logx.Warnf("extension install: %v", err)
-		} else {
-			_ = extinstall.Enable()
-		}
-		writeJSON(w, map[string]any{"ok": true, "message": "服务已在运行（已 apply + 提示词扩展）"})
+		s.restartRequired.Store(true)
+		writeJSON(w, map[string]any{"ok": true, "message": "本地服务和虚拟账户已启用，请重启 Devin 生效"})
 	case "install-wrapper", "install_wrapper":
 		meta, err := lsinstall.Install(cfg.Devin.InstallDir)
 		if err != nil {
@@ -255,23 +475,15 @@ func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
 			logx.Infof("extension disabled")
 		}
 		_ = ideinject.RestoreContextUsageDonut()
-		if _, err := devin.RestorePortal(); err != nil {
+		if _, err := devin.RestorePortal(); err != nil && !os.IsNotExist(err) {
 			logx.Warnf("control stop restore: %v", err)
 		} else {
 			logx.Infof("control stop restore ok")
 		}
-		writeJSON(w, map[string]any{"ok": true, "message": "已保存计数、restore、禁用扩展并停止（日志已清空）"})
+		s.restartRequired.Store(false)
+		writeJSON(w, map[string]any{"ok": true, "message": "BYOK 已停止，Devin 原配置已恢复；管理窗口仍可使用"})
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
-		}
-		// 仅独立 CLI serve 进程在 stop 时退出；GUI 内嵌由 nativeStop 关监听
-		exe, _ := os.Executable()
-		base := strings.ToLower(filepath.Base(exe))
-		if base == "devin-byok.exe" {
-			go func() {
-				time.Sleep(150 * time.Millisecond)
-				os.Exit(0)
-			}()
 		}
 		return
 	default:
@@ -284,7 +496,6 @@ func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-
 func (s *Server) handleAPIDesktop(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -292,16 +503,16 @@ func (s *Server) handleAPIDesktop(w http.ResponseWriter, r *http.Request) {
 		// 以磁盘 Startup 脚本为准同步 autostart 状态
 		p.Autostart = desktop.AutostartEnabled()
 		writeJSON(w, map[string]any{
-			"autostart":         p.Autostart,
-			"start_minimized":   p.StartMinimized,
-			"minimize_to_tray":  p.MinimizeToTray,
-			"autostart_path":    desktop.AutostartPath(),
+			"autostart":        p.Autostart,
+			"start_minimized":  p.StartMinimized,
+			"minimize_to_tray": p.MinimizeToTray,
+			"autostart_path":   desktop.AutostartPath(),
 		})
 	case http.MethodPut, http.MethodPost:
 		var body struct {
-			Autostart       *bool `json:"autostart"`
-			StartMinimized  *bool `json:"start_minimized"`
-			MinimizeToTray  *bool `json:"minimize_to_tray"`
+			Autostart      *bool `json:"autostart"`
+			StartMinimized *bool `json:"start_minimized"`
+			MinimizeToTray *bool `json:"minimize_to_tray"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "invalid json: "+err.Error(), 400)
@@ -316,10 +527,15 @@ func (s *Server) handleAPIDesktop(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.Autostart != nil {
 			p.Autostart = *body.Autostart
-			cli := filepath.Join(filepath.Dir(mustExe()), "devin-byok.exe")
+			exe := mustExe()
+			cli := platform.BundledCLIPath(exe)
 			if _, err := os.Stat(cli); err != nil {
-				// serve 进程自身可能是 devin-byok.exe
-				cli = mustExe()
+				if strings.EqualFold(filepath.Base(exe), platform.CLIName()) {
+					cli = exe
+				} else {
+					http.Error(w, "autostart: release executable is missing", 500)
+					return
+				}
 			}
 			if err := desktop.SetAutostart(*body.Autostart, filepath.Dir(cli), cli); err != nil {
 				http.Error(w, "autostart: "+err.Error(), 500)
@@ -339,12 +555,10 @@ func (s *Server) handleAPIDesktop(w http.ResponseWriter, r *http.Request) {
 func mustExe() string {
 	exe, err := os.Executable()
 	if err != nil {
-		return "devin-byok.exe"
+		return platform.CLIName()
 	}
 	return exe
 }
-
-
 
 func (s *Server) handleAPIVersion(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
@@ -387,7 +601,7 @@ func (s *Server) handleAPIUpdateApply(w http.ResponseWriter, r *http.Request) {
 	dir := update.DefaultInstallDir()
 	exe := mustExe()
 	if strings.Contains(strings.ToLower(filepath.Base(exe)), "devin-byok") {
-		dir = filepath.Dir(exe)
+		dir = platform.ReleaseInstallDir(exe)
 	}
 	res, err := update.DownloadAndSchedule(ctx, ucfg, version.Version, dir)
 	if err != nil {
@@ -400,8 +614,6 @@ func (s *Server) handleAPIUpdateApply(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAPIUpdateProgress(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, update.GetProgress())
 }
-
-
 
 // handleAPIPrompts 系统提示词 CRUD（扩展与 GUI 共用）。
 func (s *Server) handleAPIPrompts(w http.ResponseWriter, r *http.Request) {
@@ -447,12 +659,12 @@ func (s *Server) handleAPIExtension(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		writeJSON(w, map[string]any{
-			"ok": true,
+			"ok":        true,
 			"installed": extinstall.IsInstalled(),
-			"disabled": extinstall.IsDisabled(),
-			"id": extinstall.ExtID,
-			"dir": extinstall.UserExtensionsDir(),
-			"folder": extinstall.FolderName(),
+			"disabled":  extinstall.IsDisabled(),
+			"id":        extinstall.ExtID,
+			"dir":       extinstall.UserExtensionsDir(),
+			"folder":    extinstall.FolderName(),
 		})
 	case http.MethodPost:
 		action := r.URL.Query().Get("action")

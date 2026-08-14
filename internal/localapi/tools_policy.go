@@ -262,7 +262,8 @@ func extractWorkspaceRoots(plain []byte) []string {
 		}
 		// 过滤系统目录噪声
 		low := strings.ToLower(p)
-		if strings.Contains(low, "\\windows\\") || strings.Contains(low, "/windows/") {
+		if strings.Contains(low, "\\windows\\") || strings.Contains(low, "/windows/") ||
+			strings.Contains(low, "/system/") || strings.Contains(low, "/private/") {
 			return
 		}
 		found[p] = true
@@ -317,8 +318,7 @@ func pathOutsideWorkspace(path string, roots []string) bool {
 		return false
 	}
 	p := normalizePath(path)
-	// 相对路径不判定
-	if !regexp.MustCompile(`(?i)^[a-z]:\\`).MatchString(p) && !strings.HasPrefix(p, `\\`) {
+	if !isAbsolutePath(p) {
 		return false
 	}
 	for _, r := range roots {
@@ -331,6 +331,19 @@ func pathOutsideWorkspace(path string, roots []string) bool {
 		}
 	}
 	return true
+}
+
+func isAbsolutePath(p string) bool {
+	if regexp.MustCompile(`(?i)^[a-z]:\\`).MatchString(p) {
+		return true
+	}
+	if strings.HasPrefix(p, `\\`) {
+		return true
+	}
+	if strings.HasPrefix(p, `\`) {
+		return true
+	}
+	return false
 }
 
 // humanizeChatError 将上游/网络错误转成可读中文。

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"devin-byok/internal/platform"
 )
 
 // Paths 描述 Devin 用户数据路径。
@@ -17,15 +19,23 @@ type Paths struct {
 	StorageJSON  string
 }
 
-// ResolvePaths 解析当前用户的 Devin 数据路径。
 func ResolvePaths() (*Paths, error) {
-	appdata := os.Getenv("APPDATA")
-	if appdata == "" {
-		return nil, fmt.Errorf("APPDATA 未设置")
+	dataDirs := platform.DevinDataDirs()
+	var userData string
+	for _, d := range dataDirs {
+		if st, err := os.Stat(d); err == nil && st.IsDir() {
+			userData = d
+			break
+		}
 	}
-	userData := filepath.Join(appdata, "Devin")
-	if st, err := os.Stat(userData); err != nil || !st.IsDir() {
-		return nil, fmt.Errorf("未找到 Devin 用户目录: %s（请先启动过一次 Devin）", userData)
+	if userData == "" {
+		userData = platform.DefaultDevinDataDir()
+		if userData == "" {
+			return nil, fmt.Errorf("无法确定 Devin 用户目录")
+		}
+		if err := os.MkdirAll(userData, 0o755); err != nil {
+			return nil, fmt.Errorf("创建 Devin 用户目录失败: %w", err)
+		}
 	}
 	user := filepath.Join(userData, "User")
 	_ = os.MkdirAll(user, 0o755)
@@ -121,6 +131,169 @@ func saveSettings(path string, m map[string]any) error {
 	return os.WriteFile(path, b, 0o644)
 }
 
+func applyDevKeysToSettings(m map[string]any, wrapperPath string) bool {
+	changed := false
+	set := func(k string, v any) {
+		if m[k] != v {
+			m[k] = v
+			changed = true
+		}
+	}
+	if wrapperPath != "" {
+		set("codeiumDev.languageServerBinaryPath", wrapperPath)
+	}
+	set("devin.multiTenantMode", true)
+	set("devin.cascade.enabled", true)
+	set("sync.enableSettings", false)
+	set("security.workspace.trust.enabled", false)
+	return changed
+}
+
+// ApplyDevKeys 写入 3.7.16 适配所需 settings 键：
+//   - codeiumDev.languageServerBinaryPath：从用户目录启动 wrapper（绕过受保护的 bundle）
+//   - devin.multiTenantMode：让扩展以多租户模式启动 LS（--portal_url 等参数生效）
+//   - devin.cascade.enabled：启用 Cascade 主发送链路
+//   - sync.enableSettings：关闭设置同步，防止云端覆盖
+func ApplyDevKeys(wrapperPath string) error {
+	paths, err := ResolvePaths()
+	if err != nil {
+		return err
+	}
+	m, err := loadSettings(paths.SettingsJSON)
+	if err != nil {
+		return err
+	}
+	if !applyDevKeysToSettings(m, wrapperPath) {
+		return nil
+	}
+	return saveSettings(paths.SettingsJSON, m)
+}
+
+// ApplyLocalRuntime atomically records and applies every setting owned by
+// Devin BYOK so RestorePortal can return all keys to their original values.
+func ApplyLocalRuntime(portalBase string, settingKeys []string, wrapperPath string) (*ApplyResult, error) {
+	paths, err := ResolvePaths()
+	if err != nil {
+		return nil, err
+	}
+	portalBase = strings.TrimRight(strings.TrimSpace(portalBase), "/")
+	if portalBase == "" {
+		return nil, fmt.Errorf("portalBase 为空")
+	}
+	apiURL := portalBase + "/_route/api_server"
+	keys := mergeSettingKeys([]string{
+		"devin.portalUrl",
+		"windsurf.portalUrl",
+		"codeium.apiServerUrl",
+		"codeium.inferenceApiServerUrl",
+		"codeiumDev.languageServerBinaryPath",
+		"devin.multiTenantMode",
+		"devin.cascade.enabled",
+		"sync.enableSettings",
+	}, settingKeys)
+	values := map[string]any{
+		"devin.portalUrl":                     portalBase,
+		"windsurf.portalUrl":                  portalBase,
+		"codeium.apiServerUrl":                apiURL,
+		"codeium.inferenceApiServerUrl":       apiURL,
+		"codeiumDev.languageServerBinaryPath": wrapperPath,
+		"devin.multiTenantMode":               true,
+		"devin.cascade.enabled":               true,
+		"sync.enableSettings":                 false,
+	}
+	for _, key := range settingKeys {
+		if _, exists := values[key]; !exists {
+			values[key] = portalBase
+		}
+	}
+	return applySettings(paths, portalBase, apiURL, keys, values)
+}
+
+func mergeSettingKeys(groups ...[]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, group := range groups {
+		for _, key := range group {
+			key = strings.TrimSpace(key)
+			if key != "" && !seen[key] {
+				seen[key] = true
+				out = append(out, key)
+			}
+		}
+	}
+	return out
+}
+
+func applySettings(paths *Paths, portalBase, apiURL string, keys []string, values map[string]any) (*ApplyResult, error) {
+	return applySettingsAt(paths, portalBase, apiURL, keys, values, filepath.Join(platform.DataDir(), "last-apply.json"))
+}
+
+func applySettingsAt(paths *Paths, portalBase, apiURL string, keys []string, values map[string]any, metaPath string) (*ApplyResult, error) {
+	res := &ApplyResult{
+		PortalURL: portalBase, APIServerURL: apiURL, SettingsPath: paths.SettingsJSON,
+		SettingsKeys: keys, NeedReload: true,
+	}
+	m, err := loadSettings(paths.SettingsJSON)
+	if err != nil {
+		return nil, err
+	}
+	old, bak, active := loadActiveApply(metaPath, paths.SettingsJSON)
+	if !active {
+		bak, err = backupFile(paths.SettingsJSON)
+		if err != nil {
+			return nil, fmt.Errorf("备份 settings.json 失败: %w", err)
+		}
+		old = map[string]any{}
+		for _, key := range keys {
+			if value, ok := m[key]; ok {
+				old[key] = value
+			} else {
+				old[key] = nil
+			}
+		}
+	}
+	if bak != "" {
+		res.Backups = append(res.Backups, bak)
+	}
+	for _, key := range keys {
+		if value, ok := values[key]; ok && !(key == "codeiumDev.languageServerBinaryPath" && value == "") {
+			m[key] = value
+		}
+	}
+	if err := saveSettings(paths.SettingsJSON, m); err != nil {
+		return nil, err
+	}
+	metaDir := filepath.Dir(metaPath)
+	_ = os.MkdirAll(metaDir, 0o755)
+	meta := map[string]any{
+		"applied_at": time.Now().Format(time.RFC3339), "portal_url": portalBase,
+		"api_server_url": apiURL, "settings_path": paths.SettingsJSON,
+		"settings_keys": keys, "old_settings": old, "settings_bak": bak,
+	}
+	mb, _ := json.MarshalIndent(meta, "", "  ")
+	if err := os.WriteFile(metaPath, mb, 0o600); err != nil {
+		return nil, err
+	}
+	res.Notes = append(res.Notes, "已写入完整本地运行配置", "请完全退出并重启 Devin", "元数据: "+metaPath)
+	return res, nil
+}
+
+func loadActiveApply(path, settingsPath string) (map[string]any, string, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", false
+	}
+	var meta struct {
+		SettingsPath string         `json:"settings_path"`
+		OldSettings  map[string]any `json:"old_settings"`
+		SettingsBak  string         `json:"settings_bak"`
+	}
+	if json.Unmarshal(b, &meta) != nil || meta.SettingsPath != settingsPath || meta.OldSettings == nil {
+		return nil, "", false
+	}
+	return meta.OldSettings, meta.SettingsBak, true
+}
+
 // ApplyPortal 写入 portalUrl + codeium.apiServerUrl，强制 LS/ACP 指向本地兼容层。
 func ApplyPortal(portalBase string, settingKeys []string) (*ApplyResult, error) {
 	paths, err := ResolvePaths()
@@ -191,7 +364,7 @@ func ApplyPortal(portalBase string, settingKeys []string) (*ApplyResult, error) 
 		return nil, err
 	}
 
-	metaDir := filepath.Join(os.Getenv("APPDATA"), "devin-byok")
+	metaDir := platform.DataDir()
 	_ = os.MkdirAll(metaDir, 0o755)
 	meta := map[string]any{
 		"applied_at":     time.Now().Format(time.RFC3339),
@@ -221,7 +394,7 @@ func RestorePortal() (*RestoreResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	metaPath := filepath.Join(os.Getenv("APPDATA"), "devin-byok", "last-apply.json")
+	metaPath := filepath.Join(platform.DataDir(), "last-apply.json")
 	b, err := os.ReadFile(metaPath)
 	if err != nil {
 		return nil, fmt.Errorf("未找到 last-apply.json，无法自动恢复: %w", err)
@@ -270,5 +443,6 @@ func RestorePortal() (*RestoreResult, error) {
 		removeBackup(curBak)
 	}
 	res.Notes = append(res.Notes, "请重启 Devin 使 language_server 重新拉起")
+	_ = os.Remove(metaPath)
 	return res, nil
 }

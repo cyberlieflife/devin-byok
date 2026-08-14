@@ -1,6 +1,7 @@
-﻿package update
+package update
 
 import (
+	"archive/zip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,21 +10,21 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
+
+	"devin-byok/internal/platform"
 )
 
 // Config 在线更新配置。
 type Config struct {
-	Enabled bool   `yaml:"enabled" json:"enabled"`
+	Enabled bool `yaml:"enabled" json:"enabled"`
 	// Repo GitHub owner/name，例如 cyberlieflife/devin-byok
 	Repo string `yaml:"repo" json:"repo"`
-	// AssetContains 用于匹配 release 资产名，默认 windows-amd64.zip
+	// AssetContains 用于匹配 release 资产名，默认使用当前平台资产
 	AssetContains string `yaml:"asset_contains" json:"asset_contains"`
 	// AutoApply 检查到新版本后是否自动下载并调度替换（默认 false，需用户确认更安全）
 	AutoApply bool `yaml:"auto_apply" json:"auto_apply"`
@@ -33,18 +34,18 @@ type Config struct {
 
 // Result 检查结果。
 type Result struct {
-	OK            bool   `json:"ok"`
-	Current       string `json:"current"`
-	Latest        string `json:"latest,omitempty"`
-	UpdateAvailable bool `json:"update_available"`
-	ReleaseURL    string `json:"release_url,omitempty"`
-	AssetName     string `json:"asset_name,omitempty"`
-	AssetURL      string `json:"asset_url,omitempty"`
-	SHA256URL     string `json:"sha256_url,omitempty"`
-	Body          string `json:"body,omitempty"`
-	ChineseNotes  string `json:"chinese_notes,omitempty"`
-	Message       string `json:"message,omitempty"`
-	CheckedAt     string `json:"checked_at"`
+	OK              bool   `json:"ok"`
+	Current         string `json:"current"`
+	Latest          string `json:"latest,omitempty"`
+	UpdateAvailable bool   `json:"update_available"`
+	ReleaseURL      string `json:"release_url,omitempty"`
+	AssetName       string `json:"asset_name,omitempty"`
+	AssetURL        string `json:"asset_url,omitempty"`
+	SHA256URL       string `json:"sha256_url,omitempty"`
+	Body            string `json:"body,omitempty"`
+	ChineseNotes    string `json:"chinese_notes,omitempty"`
+	Message         string `json:"message,omitempty"`
+	CheckedAt       string `json:"checked_at"`
 }
 
 // ApplyResult 应用更新结果。
@@ -116,29 +117,30 @@ func Check(ctx context.Context, cfg Config, current string) Result {
 	res.ChineseNotes = buildChineseNotes(res.Current, res.Latest, rel.Body)
 	want := cfg.AssetContains
 	if want == "" {
-		want = "windows-amd64.zip"
+		want = platform.AssetSuffix()
 	}
-	var zipURL, shaURL, zipName string
+	var assetURL, shaURL, assetName string
 	for _, a := range rel.Assets {
 		n := strings.ToLower(a.Name)
-		if strings.Contains(n, strings.ToLower(want)) && strings.HasSuffix(n, ".zip") && !strings.HasSuffix(n, ".sha256") {
-			zipURL = a.BrowserDownloadURL
-			zipName = a.Name
+		if strings.Contains(n, strings.ToLower(want)) && isInstallAsset(n) {
+			assetURL = a.BrowserDownloadURL
+			assetName = a.Name
 		}
-		if strings.HasSuffix(n, ".sha256") && strings.Contains(n, strings.ToLower(strings.TrimSuffix(want, ".zip"))) {
+		stem := strings.TrimSuffix(strings.ToLower(want), filepath.Ext(strings.ToLower(want)))
+		if strings.HasSuffix(n, ".sha256") && strings.Contains(n, stem) {
 			shaURL = a.BrowserDownloadURL
 		}
 	}
 	// 若没匹配到 sha，尝试 同名.zip.sha256
-	if zipURL != "" && shaURL == "" {
+	if assetURL != "" && shaURL == "" {
 		for _, a := range rel.Assets {
-			if strings.EqualFold(a.Name, zipName+".sha256") {
+			if strings.EqualFold(a.Name, assetName+".sha256") {
 				shaURL = a.BrowserDownloadURL
 			}
 		}
 	}
-	res.AssetName = zipName
-	res.AssetURL = zipURL
+	res.AssetName = assetName
+	res.AssetURL = assetURL
 	res.SHA256URL = shaURL
 	if res.Latest == "" {
 		res.OK = false
@@ -147,7 +149,7 @@ func Check(ctx context.Context, cfg Config, current string) Result {
 	}
 	cmp := compareSemver(res.Current, res.Latest)
 	res.UpdateAvailable = cmp < 0
-	if zipURL == "" {
+	if assetURL == "" {
 		res.Message = "找到版本但未匹配安装包资产：" + want
 	} else if res.UpdateAvailable {
 		res.Message = "发现新版本 v" + res.Latest
@@ -157,7 +159,15 @@ func Check(ctx context.Context, cfg Config, current string) Result {
 	return res
 }
 
-// DownloadAndSchedule 下载 zip，校验 sha256（若有），写更新脚本并启动后退出由调用方处理。
+func isInstallAsset(name string) bool {
+	name = strings.ToLower(name)
+	if strings.HasSuffix(name, ".sha256") {
+		return false
+	}
+	return strings.HasSuffix(name, ".zip") || strings.HasSuffix(name, ".dmg") || strings.HasSuffix(name, ".exe")
+}
+
+// DownloadAndSchedule 下载当前平台安装包，校验 sha256（若有），写更新脚本并启动后退出由调用方处理。
 func DownloadAndSchedule(ctx context.Context, cfg Config, current string, installDir string) (ApplyResult, error) {
 	setProgress("checking", 0, 0, 0, "正在检查更新…")
 	check := Check(ctx, cfg, current)
@@ -175,25 +185,25 @@ func DownloadAndSchedule(ctx context.Context, cfg Config, current string, instal
 	}
 	if installDir == "" {
 		exe, _ := os.Executable()
-		installDir = filepath.Dir(exe)
+		installDir = platform.ReleaseInstallDir(exe)
 	}
 	if abs, err := filepath.Abs(installDir); err == nil {
 		installDir = abs
 	}
 	tmp := filepath.Join(os.TempDir(), "devin-byok-update-"+strconv.FormatInt(time.Now().Unix(), 10))
 	_ = os.MkdirAll(tmp, 0o755)
-	zipPath := filepath.Join(tmp, check.AssetName)
+	artifactPath := filepath.Join(tmp, check.AssetName)
 	setProgress("downloading", 0, 0, 0, "正在下载 "+check.Latest+"…")
-	if err := downloadFileProgress(ctx, check.AssetURL, zipPath); err != nil {
+	if err := downloadFileProgress(ctx, check.AssetURL, artifactPath); err != nil {
 		setProgress("error", 0, 0, 0, "下载失败: "+err.Error())
 		return ApplyResult{OK: false, Message: err.Error()}, err
 	}
 	if check.SHA256URL != "" {
-		sumPath := zipPath + ".sha256"
+		sumPath := artifactPath + ".sha256"
 		setProgress("verifying", 95, 0, 0, "正在校验 SHA256…")
 		if err := downloadFile(ctx, check.SHA256URL, sumPath); err == nil {
 			want, _ := os.ReadFile(sumPath)
-			got, err := fileSHA256(zipPath)
+			got, err := fileSHA256(artifactPath)
 			if err != nil {
 				return ApplyResult{OK: false, Message: err.Error()}, err
 			}
@@ -207,64 +217,25 @@ func DownloadAndSchedule(ctx context.Context, cfg Config, current string, instal
 			}
 		}
 	}
-	extractDir := filepath.Join(tmp, "extract")
-	_ = os.MkdirAll(extractDir, 0o755)
-	if err := unzip(zipPath, extractDir); err != nil {
-		return ApplyResult{OK: false, Message: "unzip: " + err.Error()}, err
+	guiName := platform.GUIName()
+	var script string
+	var err error
+	if strings.HasSuffix(strings.ToLower(check.AssetName), ".zip") {
+		extractDir := filepath.Join(tmp, "extract")
+		_ = os.MkdirAll(extractDir, 0o755)
+		if err := unzip(artifactPath, extractDir); err != nil {
+			return ApplyResult{OK: false, Message: "unzip: " + err.Error()}, err
+		}
+		script, err = scheduleApply(extractDir, installDir, guiName, tmp)
+	} else {
+		script, err = scheduleApplyArtifact(artifactPath, installDir, guiName, tmp)
 	}
-	// PowerShell 应用脚本：等待旧进程释放文件锁 → 复制 → 启动新 GUI → 退出（不留黑窗）
-	script := filepath.Join(tmp, "apply-update.ps1")
-	srcPS := powershellSingleQuote(extractDir)
-	dstPS := powershellSingleQuote(installDir)
-	guiName := "devin-byok-gui.exe"
-	ps := strings.Join([]string{
-		"$ErrorActionPreference = 'Continue'",
-		"Write-Host '[devin-byok] waiting for old process to exit...'",
-		"$src = " + srcPS,
-		"$dst = " + dstPS,
-		"$gui = Join-Path $dst '" + guiName + "'",
-		"$srcGui = Join-Path $src '" + guiName + "'",
-		"if (-not (Test-Path -LiteralPath $srcGui)) { Write-Host '[devin-byok] ERROR: missing' $srcGui; exit 1 }",
-		"# 最多等 40s，直到目标 exe 可写（旧 GUI 已退出）",
-		"for ($i = 0; $i -lt 80; $i++) {",
-		"  try {",
-		"    if (Test-Path -LiteralPath $gui) {",
-		"      $fs = [System.IO.File]::Open($gui, 'Open', 'ReadWrite', 'None')",
-		"      $fs.Close()",
-		"    }",
-		"    break",
-		"  } catch {",
-		"    Start-Sleep -Milliseconds 500",
-		"  }",
-		"}",
-		"Write-Host '[devin-byok] applying update to' $dst",
-		"New-Item -ItemType Directory -Force -Path $dst | Out-Null",
-		"Copy-Item -LiteralPath $srcGui -Destination $gui -Force",
-		"if (Test-Path -LiteralPath (Join-Path $src 'START.txt')) { Copy-Item -LiteralPath (Join-Path $src 'START.txt') -Destination (Join-Path $dst 'START.txt') -Force }",
-		"if (Test-Path -LiteralPath (Join-Path $src 'config.example.yaml')) { Copy-Item -LiteralPath (Join-Path $src 'config.example.yaml') -Destination (Join-Path $dst 'config.example.yaml') -Force }",
-		"Write-Host '[devin-byok] update applied'",
-		"Start-Process -FilePath $gui -WorkingDirectory $dst",
-		"Write-Host '[devin-byok] done'",
-		"exit 0",
-	}, "\r\n") + "\r\n"
-	if err := os.WriteFile(script, []byte(ps), 0o755); err != nil {
-		setProgress("error", 0, 0, 0, err.Error())
-		return ApplyResult{OK: false, Message: err.Error()}, err
-	}
-	// 隐藏窗口启动；/c 执行完自动结束，避免残留 cmd
-	cmd := exec.Command("powershell",
-		"-NoProfile", "-ExecutionPolicy", "Bypass",
-		"-WindowStyle", "Hidden",
-		"-File", script,
-	)
-	cmd.Dir = tmp
-	cmd.SysProcAttr = hiddenSysProcAttr()
-	if err := cmd.Start(); err != nil {
+	if err != nil {
 		setProgress("error", 0, 0, 0, err.Error())
 		return ApplyResult{OK: false, Message: err.Error()}, err
 	}
 	setProgress("scheduling", 100, 0, 0, "即将退出并安装 "+check.Latest)
-	return ApplyResult{OK: true, Message: "已下载 " + check.Latest + "，即将替换并重启", Script: script, ZipPath: zipPath}, nil
+	return ApplyResult{OK: true, Message: "已下载 " + check.Latest + "，即将替换并重启", Script: script, ZipPath: artifactPath}, nil
 }
 
 func downloadFile(ctx context.Context, url, dest string) error {
@@ -304,12 +275,40 @@ func fileSHA256(path string) (string, error) {
 }
 
 func unzip(zipPath, dest string) error {
-	// 使用 PowerShell Expand-Archive，避免再引 archive/zip 依赖问题
-	cmd := exec.Command("powershell", "-NoProfile", "-Command",
-		fmt.Sprintf("Expand-Archive -LiteralPath '%s' -DestinationPath '%s' -Force", zipPath, dest))
-	out, err := cmd.CombinedOutput()
+	r, err := zip.OpenReader(zipPath)
 	if err != nil {
-		return fmt.Errorf("%v: %s", err, string(out))
+		return err
+	}
+	defer r.Close()
+	for _, f := range r.File {
+		cleanDest := filepath.Clean(dest)
+		target := filepath.Join(cleanDest, filepath.FromSlash(f.Name))
+		rel, relErr := filepath.Rel(cleanDest, target)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+			return fmt.Errorf("illegal file path: %s", f.Name)
+		}
+		if f.FileInfo().IsDir() {
+			_ = os.MkdirAll(target, 0o755)
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return err
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, f.Mode())
+		if err != nil {
+			rc.Close()
+			return err
+		}
+		_, err = io.Copy(out, rc)
+		rc.Close()
+		out.Close()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -365,7 +364,7 @@ func DefaultInstallDir() string {
 	if err != nil {
 		return "."
 	}
-	dir := filepath.Dir(exe)
+	dir := platform.ReleaseInstallDir(exe)
 	if abs, err := filepath.Abs(dir); err == nil {
 		return abs
 	}
@@ -374,7 +373,6 @@ func DefaultInstallDir() string {
 
 // GOOS helper for tests
 func IsWindows() bool { return runtime.GOOS == "windows" }
-
 
 func buildChineseNotes(current, latest, body string) string {
 	var b strings.Builder
@@ -441,15 +439,4 @@ func downloadFileProgress(ctx context.Context, url, dest string) error {
 		setProgress("downloading", 90, pr.read, pr.total, "下载完成，准备校验…")
 	}
 	return err
-}
-
-
-func powershellSingleQuote(s string) string {
-	// PowerShell 单引号字符串：' -> ''
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
-}
-
-// hiddenSysProcAttr 隐藏子进程控制台窗口（Windows）。
-func hiddenSysProcAttr() *syscall.SysProcAttr {
-	return &syscall.SysProcAttr{HideWindow: true}
 }

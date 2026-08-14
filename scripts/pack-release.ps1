@@ -11,7 +11,7 @@ if (-not $Version) {
   if ($vg -match 'Version = "([^"]+)"') { $Version = $Matches[1] } else { $Version = "0.0.0" }
 }
 
-Write-Host "Building self-contained GUI release $Version ..."
+Write-Host "Building self-contained Windows GUI release $Version ..."
 # 先编译内嵌 ls-wrapper + 同步配置模板
 New-Item -ItemType Directory -Force -Path .\internal\payload | Out-Null
 if (Test-Path .\config.example.yaml) {
@@ -40,32 +40,10 @@ if (Test-Path $rsrc) {
 go build -ldflags "-H windowsgui -s -w $ld" -o devin-byok-gui.exe ./cmd/devin-byok-gui
 
 $dist = Join-Path $Root "dist"
-$stage = Join-Path $dist ("devin-byok-" + $Version + "-windows-amd64")
-if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
-New-Item -ItemType Directory -Force -Path $stage | Out-Null
-
-Copy-Item .\devin-byok-gui.exe $stage\
-
-$start = @"
-Devin BYOK v$Version (self-contained GUI)
-
-1. Run devin-byok-gui.exe
-2. Configure models/providers in GUI (saved to %USERPROFILE%\.devin-byok\config.yaml)
-3. Start service in GUI (auto apply + LS wrapper)
-4. Fully quit and reopen Devin, pick a BYOK model
-
-Quit GUI: service stops automatically and Devin settings restore.
-
-Repo: https://github.com/cyberlieflife/devin-byok
-License: AGPL-3.0
-"@
-Set-Content -Encoding UTF8 (Join-Path $stage "START.txt") -Value $start
-
-$zip = Join-Path $dist ("devin-byok-" + $Version + "-windows-amd64.zip")
-if (Test-Path $zip) { Remove-Item -Force $zip }
-Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip -Force
-$hash = (Get-FileHash -Algorithm SHA256 $zip).Hash
-$hash | Set-Content -Encoding ASCII ($zip + ".sha256")
-Write-Host "OK $zip"
+$exe = Join-Path $dist ("devin-byok-" + $Version + "-windows-amd64.exe")
+if (Test-Path $exe) { Remove-Item -Force $exe }
+Copy-Item .\devin-byok-gui.exe $exe
+$hash = (Get-FileHash -Algorithm SHA256 $exe).Hash
+$hash | Set-Content -Encoding ASCII ($exe + ".sha256")
+Write-Host "OK $exe"
 Write-Host "SHA256 $hash"
-Get-ChildItem $stage | ForEach-Object { Write-Host ("  " + $_.Name) }

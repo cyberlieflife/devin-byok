@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"devin-byok/internal/logx"
+	"devin-byok/internal/platform"
 )
 
 //go:embed byok-context-usage.js
@@ -22,15 +23,15 @@ const (
 )
 
 func sessionsHTML(installDir string) string {
-	return filepath.Join(installDir, "resources", "app", "out", "vs", "sessions", "electron-browser", "sessions.html")
+	return platform.SessionsHTMLPath(installDir)
 }
 
 func sessionsDir(installDir string) string {
-	return filepath.Join(installDir, "resources", "app", "out", "vs", "sessions", "electron-browser")
+	return filepath.Dir(platform.SessionsHTMLPath(installDir))
 }
 
 func metaPath() string {
-	return filepath.Join(os.Getenv("APPDATA"), "devin-byok", metaFileName)
+	return filepath.Join(platform.DataDir(), metaFileName)
 }
 
 // ApplyContextUsageDonut 向 Devin sessions.html 注入悬停四色环脚本。
@@ -110,7 +111,8 @@ func restoreAt(installDir string) error {
 		return nil
 	}
 	htmlPath := sessionsHTML(installDir)
-	jsPath := filepath.Join(sessionsDir(installDir), scriptName)
+	dir := sessionsDir(installDir)
+	jsPath := filepath.Join(dir, scriptName)
 	raw, err := os.ReadFile(htmlPath)
 	if err != nil {
 		return nil
@@ -129,6 +131,15 @@ func restoreAt(installDir string) error {
 		}
 	}
 	_ = os.Remove(jsPath)
+	// 清理历史备份，恢复 bundle 原貌（避免安装完整性校验误报）
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, e := range entries {
+			n := e.Name()
+			if strings.HasPrefix(n, "sessions.html.bak_byok_ctx_") {
+				_ = os.Remove(filepath.Join(dir, n))
+			}
+		}
+	}
 	_ = os.Remove(metaPath())
 	logx.Infof("ideinject context-usage: restored %s", htmlPath)
 	return nil
@@ -141,7 +152,7 @@ type injectMeta struct {
 }
 
 func writeMeta(installDir, htmlPath, jsPath string, fresh bool) error {
-	dir := filepath.Join(os.Getenv("APPDATA"), "devin-byok")
+	dir := platform.DataDir()
 	_ = os.MkdirAll(dir, 0o755)
 	b := []byte(fmt.Sprintf(
 		"{\n  \"install_dir\": %q,\n  \"html_path\": %q,\n  \"js_path\": %q,\n  \"applied_at\": %q,\n  \"fresh_html_inject\": %v\n}\n",
@@ -187,10 +198,7 @@ func jsonStringField(s, key string) string {
 }
 
 func detectInstallDir() string {
-	cands := []string{`D:\Devin`, `C:\Program Files\Devin`, `C:\Program Files (x86)\Devin`}
-	if v := os.Getenv("DEVIN_INSTALL_DIR"); v != "" {
-		cands = append([]string{v}, cands...)
-	}
+	cands := platform.DevinInstallCandidates()
 	for _, c := range cands {
 		if st, err := os.Stat(sessionsHTML(c)); err == nil && !st.IsDir() {
 			return c

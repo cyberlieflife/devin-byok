@@ -6,7 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
+
+	"devin-byok/internal/platform"
 )
 
 // language_server 包装器：强制把 api/inference URL 指到本地兼容层。
@@ -17,7 +18,7 @@ func main() {
 		os.Exit(1)
 	}
 	dir := filepath.Dir(exe)
-	real := filepath.Join(dir, "language_server_windows_x64.real.exe")
+	real := filepath.Join(dir, platform.RealLanguageServerName())
 	if _, err := os.Stat(real); err != nil {
 		fmt.Fprintf(os.Stderr, "wrapper: missing real binary: %s\n", real)
 		os.Exit(1)
@@ -31,11 +32,19 @@ func main() {
 	if inf == "" {
 		inf = api
 	}
+	portal := strings.TrimRight(os.Getenv("DEVIN_BYOK_PORTAL_URL"), "/")
+	if portal == "" {
+		portal = "http://127.0.0.1:8787"
+	}
+	register := strings.TrimRight(os.Getenv("DEVIN_BYOK_REGISTER_USER_URL"), "/")
+	if register == "" {
+		register = "http://127.0.0.1:8787/register_user/after"
+	}
 
-	args := rewriteArgs(os.Args[1:], api, inf)
+	args := rewriteArgs(os.Args[1:], api, inf, portal, register)
 
 	// 记录启动参数，便于验证
-	logPath := filepath.Join(os.Getenv("APPDATA"), "devin-byok", "ls-wrapper-last.json")
+	logPath := filepath.Join(platform.DataDir(), "ls-wrapper-last.json")
 	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
 	_ = os.WriteFile(logPath, []byte(fmt.Sprintf(`{"real":%q,"api":%q,"inference":%q,"args":%q}`, real, api, inf, strings.Join(args, " "))), 0o644)
 
@@ -44,8 +53,6 @@ func main() {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
-	// Windows: 同控制台组
-	cmd.SysProcAttr = &syscall.SysProcAttr{}
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			os.Exit(ee.ExitCode())
@@ -55,10 +62,10 @@ func main() {
 	}
 }
 
-func rewriteArgs(in []string, api, inf string) []string {
-	out := make([]string, 0, len(in)+4)
+func rewriteArgs(in []string, api, inf, portal, register string) []string {
+	out := make([]string, 0, len(in)+6)
 	skipNext := false
-	seenAPI, seenInf := false, false
+	seenAPI, seenInf, seenPortal, seenRegister := false, false, false, false
 	for i := 0; i < len(in); i++ {
 		if skipNext {
 			skipNext = false
@@ -78,6 +85,18 @@ func rewriteArgs(in []string, api, inf string) []string {
 			if i+1 < len(in) {
 				skipNext = true
 			}
+		case "--portal_url":
+			out = append(out, a, portal)
+			seenPortal = true
+			if i+1 < len(in) {
+				skipNext = true
+			}
+		case "--register_user_url":
+			out = append(out, a, register)
+			seenRegister = true
+			if i+1 < len(in) {
+				skipNext = true
+			}
 		default:
 			// 兼容 --api_server_url=xxx
 			if strings.HasPrefix(a, "--api_server_url=") {
@@ -90,6 +109,16 @@ func rewriteArgs(in []string, api, inf string) []string {
 				seenInf = true
 				continue
 			}
+			if strings.HasPrefix(a, "--portal_url=") {
+				out = append(out, "--portal_url", portal)
+				seenPortal = true
+				continue
+			}
+			if strings.HasPrefix(a, "--register_user_url=") {
+				out = append(out, "--register_user_url", register)
+				seenRegister = true
+				continue
+			}
 			out = append(out, a)
 		}
 	}
@@ -98,6 +127,12 @@ func rewriteArgs(in []string, api, inf string) []string {
 	}
 	if !seenInf {
 		out = append(out, "--inference_api_server_url", inf)
+	}
+	if !seenPortal {
+		out = append(out, "--portal_url", portal)
+	}
+	if !seenRegister {
+		out = append(out, "--register_user_url", register)
 	}
 	return out
 }

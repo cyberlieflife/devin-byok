@@ -130,6 +130,11 @@ func TestTeamConfigDisablesFastContextFalse(t *testing.T) {
 	}
 }
 
+func TestProfileDataDoesNotAdvertiseTextAsAvatarURL(t *testing.T) {
+	if got := buildGetProfileDataResponse(); len(got) != 0 {
+		t.Fatalf("profile data should stay empty for Devin 3.7.16, got %x", got)
+	}
+}
 
 func TestDuplicateModelIDsNormalized(t *testing.T) {
 	// 模拟用户写了两个相同 id
@@ -185,7 +190,6 @@ features:
 func writeFile(path string, b []byte) error {
 	return os.WriteFile(path, b, 0o644)
 }
-
 
 func TestThinkingResolveAndFamily(t *testing.T) {
 	raw := []byte(`
@@ -295,7 +299,6 @@ features:
 		t.Fatalf("family token defaults not applied: %+v", cfg.ModelList()[0])
 	}
 }
-
 
 func TestClientModelConfigContextUsesContextWindow(t *testing.T) {
 	// UI contextLimit ? ClientModelConfig.max_tokens(field 18)???? context_window????? max_tokens?

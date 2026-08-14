@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,24 +21,27 @@ import (
 	"devin-byok/internal/config"
 	"devin-byok/internal/logx"
 	"devin-byok/internal/pbwire"
-	"devin-byok/internal/upstream/openai"
 	"devin-byok/internal/promptstore"
+	"devin-byok/internal/upstream/openai"
 )
 
 // Server 本地 Codeium API 兼容层。
 type Server struct {
-	mu       sync.RWMutex
-	cfg      *config.File
-	cfgPath  string
-	upstream *openai.Client
-	rpcMu    sync.Mutex
-	rpcLog   string
-	bodyDir  string
-	stopWatch  chan struct{}
-	rpcRotator *logx.RotatingWriter
+	mu              sync.RWMutex
+	cfg             *config.File
+	cfgPath         string
+	upstream        *openai.Client
+	rpcMu           sync.Mutex
+	rpcLog          string
+	bodyDir         string
+	stopWatch       chan struct{}
+	rpcRotator      *logx.RotatingWriter
+	restartRequired atomic.Bool
 }
 
 const officialAPIBase = "https://server.codeium.com"
+
+func boolPtr(v bool) *bool { return &v }
 
 func New(cfg *config.File, captureDir string) *Server {
 	if captureDir == "" {
@@ -47,11 +51,11 @@ func New(cfg *config.File, captureDir string) *Server {
 	bodyDir := filepath.Join(captureDir, "bodies")
 	_ = os.MkdirAll(bodyDir, 0o755)
 	return &Server{
-		cfg:       cfg,
-		upstream:  openai.New(cfg.Upstream),
-		rpcLog:    filepath.Join(captureDir, "localapi-rpc.jsonl"),
-		bodyDir:   bodyDir,
-		stopWatch: make(chan struct{}),
+		cfg:        cfg,
+		upstream:   openai.New(cfg.Upstream),
+		rpcLog:     filepath.Join(captureDir, "localapi-rpc.jsonl"),
+		bodyDir:    bodyDir,
+		stopWatch:  make(chan struct{}),
 		rpcRotator: logx.NewRotatingWriter(filepath.Join(captureDir, "localapi-rpc.jsonl"), 32<<20, 3),
 	}
 }
@@ -148,7 +152,6 @@ func (s *Server) StartConfigWatch(interval time.Duration) {
 	}()
 }
 
-
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.handleHealthz)
@@ -163,20 +166,20 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	cfg := s.GetConfig()
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok":         true,
-		"service":    "devin-byok-local-api",
-		"time":       time.Now().Format(time.RFC3339),
-		"portal":     cfg.Server.PublicBase,
-		"api":        cfg.Server.PublicBase + cfg.APIBasePath(),
-		"model":      cfg.DefaultModelID(),
-		"models":     cfg.ModelList(),
-		"pure_local":     cfg.Features.PureLocal,
-		"stream":         cfg.Features.EnableStream,
-		"cascade_tools":  cfg.Features.EnableCascadeTools,
-		"deepwiki":       cfg.Features.EnableDeepWiki,
-		"codemap":        cfg.Features.EnableCodeMap,
-		"tools_mode":     cfg.ToolsMode(),
-		"tools_timeout":  cfg.ResolveChatTimeoutSec(true),
+		"ok":            true,
+		"service":       "devin-byok-local-api",
+		"time":          time.Now().Format(time.RFC3339),
+		"portal":        cfg.Server.PublicBase,
+		"api":           cfg.Server.PublicBase + cfg.APIBasePath(),
+		"model":         cfg.DefaultModelID(),
+		"models":        cfg.ModelList(),
+		"pure_local":    cfg.Features.PureLocal,
+		"stream":        cfg.Features.EnableStream,
+		"cascade_tools": cfg.Features.EnableCascadeTools,
+		"deepwiki":      cfg.Features.EnableDeepWiki,
+		"codemap":       cfg.Features.EnableCodeMap,
+		"tools_mode":    cfg.ToolsMode(),
+		"tools_timeout": cfg.ResolveChatTimeoutSec(true),
 	})
 }
 
@@ -186,13 +189,54 @@ func (s *Server) handleOpenAIProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, _ := io.ReadAll(r.Body)
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, s.upstream.Endpoint(), bytes.NewReader(body))
+	var envelope struct {
+		Model string `json:"model"`
+	}
+	_ = json.Unmarshal(body, &envelope)
+	cfg := s.GetConfig()
+	modelID := strings.TrimSpace(envelope.Model)
+	if modelID == "" {
+		modelID = cfg.DefaultModelID()
+	}
+	model, ok := cfg.ResolveModelUID(modelID)
+	if !ok {
+		model = config.ModelEntry{ID: modelID, UpstreamModel: modelID}
+	}
+	prov, ok := cfg.ResolveProvider(model.ID)
+	if !ok {
+		// Keep legacy single-provider configs working when the request uses the
+		// configured upstream model name rather than a Devin model UID.
+		prov = config.ProviderResolved{
+			BaseURL: cfg.Upstream.BaseURL, APIKey: cfg.Upstream.APIKey,
+			UpstreamModel: model.ResolveUpstream(), Headers: cfg.Upstream.Headers,
+		}
+	}
+	if prov.UpstreamModel != "" && modelID != prov.UpstreamModel {
+		var payload map[string]json.RawMessage
+		if err := json.Unmarshal(body, &payload); err == nil {
+			encodedModel, _ := json.Marshal(prov.UpstreamModel)
+			payload["model"] = encodedModel
+			if remapped, err := json.Marshal(payload); err == nil {
+				body = remapped
+			}
+		}
+	}
+	endpoint := config.NormalizeChatCompletionsURL(prov.BaseURL)
+	if endpoint == "" {
+		http.Error(w, "model provider base_url is not configured", http.StatusBadGateway)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+s.GetConfig().Upstream.APIKey)
+	req.Header.Set("Authorization", "Bearer "+prov.APIKey)
+	for k, v := range prov.Headers {
+		req.Header.Set(k, v)
+	}
+	logx.Infof("openai proxy model=%s upstream_model=%s base=%s", model.ID, prov.UpstreamModel, truncate(prov.BaseURL, 80))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		http.Error(w, err.Error(), 502)
@@ -243,17 +287,17 @@ func (s *Server) serveRPC(w http.ResponseWriter, r *http.Request) {
 	s.dumpBody(method, raw)
 
 	rec := map[string]any{
-		"ts":       time.Now().Format(time.RFC3339Nano),
-		"method":   r.Method,
-		"path":     path,
-		"rpc":      method,
-		"ctype":    ctype,
-		"connect":  r.Header.Get("Connect-Protocol-Version"),
-		"encoding": r.Header.Get("Content-Encoding"),
-		"body_len": len(raw),
+		"ts":        time.Now().Format(time.RFC3339Nano),
+		"method":    r.Method,
+		"path":      path,
+		"rpc":       method,
+		"ctype":     ctype,
+		"connect":   r.Header.Get("Connect-Protocol-Version"),
+		"encoding":  r.Header.Get("Content-Encoding"),
+		"body_len":  len(raw),
 		"plain_len": len(body),
-		"body_b64": truncateB64(raw, 2048),
-		"strings":  extractStrings(body, 12),
+		"body_b64":  truncateB64(raw, 2048),
+		"strings":   extractStrings(body, 12),
 	}
 	s.appendRPC(rec)
 	logx.Infof("RPC %s plain=%d ctype=%s", method, len(body), ctype)
@@ -282,6 +326,9 @@ func (s *Server) serveRPC(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasSuffix(method, "Ping"):
 		s.writeProtoRPC(w, method, buildPingResponse())
+		return
+	case strings.HasSuffix(method, "RegisterUser"):
+		s.writeProtoRPC(w, method, buildRegisterUserResponse(cfg))
 		return
 	case strings.HasSuffix(method, "GetUserStatus"):
 		s.writeProtoRPC(w, method, buildGetUserStatusResponse(cfg))
@@ -352,7 +399,7 @@ func (s *Server) serveRPC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-// ---- P1 chat-ish streaming / unary ----
+	// ---- P1 chat-ish streaming / unary ----
 	if isDevstralRPC(method) {
 		s.handleGetDevstralStream(w, r, method, body, raw)
 		return
@@ -371,7 +418,6 @@ func isDeepWikiRPC(method string) bool {
 	m := strings.ToLower(method)
 	return strings.Contains(m, "getdeepwiki")
 }
-
 
 // commitGenPendingUntil 在 RecordCommitMessageGeneration 后短窗口内把聊天计为 Commit 生成。
 var commitGenPendingUntil atomic.Int64
@@ -631,19 +677,35 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		}()
 		return
 	}
+	if !isTitleReq && !fastCtx && isModelIdentityQuestion(userText) {
+		answer := modelIdentityAnswer(modelDisplayName(cfg, uiModel), userText)
+		w.Header().Set("Content-Type", "application/connect+proto")
+		w.Header().Set("Connect-Protocol-Version", "1")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(pbwire.ConnectFrame(0, buildGetChatMessageDelta(msgID, answer, "", false)))
+		_, _ = w.Write(pbwire.ConnectEndStream())
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		metricsReqOK(uiModel, estimateTokens(userText), estimateTokens(answer), 0)
+		metricsAddLog("info", "model identity answered locally model="+uiModel)
+		return
+	}
 	// …/family … sampling
 	maxTok := cfg.Upstream.Sampling.MaxTokens
 	if me, ok := cfg.FindModel(uiModel); ok && me.MaxTokens > 0 {
 		maxTok = me.MaxTokens
 	}
 	chatOpt := openai.ChatOptions{
-		Thinking:      effort,
-		ThinkingParam: cfg.Upstream.Thinking.Param,
-		Temperature:   cfg.Upstream.Sampling.Temperature,
-		MaxTokens:     maxTok,
-		TopP:          cfg.Upstream.Sampling.TopP,
-		BaseURL:       prov.BaseURL,
-		APIKey:        prov.APIKey,
+		Thinking:             effort,
+		ThinkingParam:        firstNonEmptyStr(prov.ThinkingParam, cfg.Upstream.Thinking.Param),
+		ThinkingType:         prov.ThinkingType,
+		ThinkingBudgetTokens: prov.ThinkingBudgetTokens,
+		Temperature:          cfg.Upstream.Sampling.Temperature,
+		MaxTokens:            maxTok,
+		TopP:                 cfg.Upstream.Sampling.TopP,
+		BaseURL:              prov.BaseURL,
+		APIKey:               prov.APIKey,
 	}
 	// Cascade … tools.mode … function calling
 	toolsMode := cfg.ToolsMode()
@@ -680,18 +742,28 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	if isTitleReq {
 		msgs = injectSystemNote(msgs, "按照用户的语言生成对应语言的标题", "对应语言的标题")
 	}
-	// 系统提示词（含固定 write/edit 提示）始终注入
-	msgs = promptstore.ApplyToMessages(msgs)
 	workspaceRoots := extractWorkspaceRoots(plain)
-	logx.Infof("chat-like %s userText=%q msg=%s uiModel=%s upstreamModel=%s provider=%s base=%s thinking=%s stream=%v sysPrompt=%d toolsIn=%d toolsOut=%d mode=%s hist=%d plain=%d cascadeTools=%v workspace=%v",
-		method, truncate(userText, 80), msgID, uiModel, model, prov.Provider, truncate(prov.BaseURL, 60), effort, cfg.Features.EnableStream, len(parsed.SystemPrompt), len(parsed.Tools), len(filteredTools), toolsMode, len(parsed.Messages), len(plain), cfg.Features.EnableCascadeTools, workspaceRoots)
+	route := "chat"
+	if fastCtx {
+		route = "fast_context"
+	}
+	composed := promptstore.ComposeMessages(msgs, promptstore.ComposeContext{
+		Route: route, ModelID: uiModel, ModelName: modelDisplayName(cfg, uiModel), Family: prov.FamilyUID,
+		UserText: userText, HasTools: len(chatOpt.Tools) > 0,
+		HasWorkspace: len(workspaceRoots) > 0, QualityMode: cfg.QualityMode(), QualityEnabled: boolPtr(cfg.Quality.Enabled),
+	})
+	msgs = composed.Messages
+	task := promptstore.DetectTask(userText)
+	logx.Infof("chat-like %s msg=%s uiModel=%s upstreamModel=%s provider=%s base=%s thinking=%s route=%s task=%s quality=%s profiles=%v prompt_hash=%s stream=%v sysPrompt=%d toolsIn=%d toolsOut=%d mode=%s hist=%d plain=%d cascadeTools=%v workspace=%v",
+		method, msgID, uiModel, model, prov.Provider, truncate(prov.BaseURL, 60), effort, route, task, cfg.QualityMode(), composed.ProfileIDs, composed.Hash, cfg.Features.EnableStream, len(parsed.SystemPrompt), len(parsed.Tools), len(filteredTools), toolsMode, len(parsed.Messages), len(plain), cfg.Features.EnableCascadeTools, workspaceRoots)
 	metricsAddLog("info", fmt.Sprintf("chat model=%s tools=%d %q", uiModel, len(filteredTools), truncate(userText, 60)))
+	metricsPromptContext(route, task, cfg.QualityMode(), effort, composed.ProfileIDs, composed.Hash)
 	metricsAddLog("info", fmt.Sprintf("upstream start model=%s base=%s stream=%v tools=%d timeout=%ds", model, truncate(prov.BaseURL, 80), cfg.Features.EnableStream, len(chatOpt.Tools), cfg.ResolveChatTimeoutSec(len(chatOpt.Tools) > 0)))
 
 	// 响应缓存：无工具时按 model+消息指纹命中
 	cacheKey := ""
 	if len(chatOpt.Tools) == 0 {
-		cacheKey = respCacheKey(model, effort, msgs, nil)
+		cacheKey = respCacheKey(model, effort, composed.Hash, msgs, nil)
 		if ent, ok := respCacheGet(cfg, cacheKey); ok {
 			metricsAddLog("info", "cache hit model="+model)
 			// 直接回放缓存（流式也一次性吐出，保证正确）
@@ -779,6 +851,8 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	var warn string
 	var result chatResult
 	const maxWorkspacePathRetries = 5
+	const maxStreamInterruptedRetries = 2
+	streamRetries := 0
 
 	for retry := 0; retry <= maxWorkspacePathRetries; retry++ {
 		done := make(chan chatResult, 1)
@@ -881,6 +955,16 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		cancel()
 
 		if result.err != nil {
+			if errors.Is(result.err, openai.ErrStreamInterrupted) && streamRetries < maxStreamInterruptedRetries {
+				streamRetries++
+				// 把第一遍已收到的文本回填为 assistant 消息，让重试
+				// 从中断处继续，避免向 Devin 重复输出。
+				if strings.TrimSpace(result.text) != "" {
+					msgs = append(msgs, openai.ChatMessage{Role: "assistant", Content: result.text})
+				}
+				metricsAddLog("warn", fmt.Sprintf("upstream stream interrupted, resuming (%d/%d) partial=%d chars", streamRetries, maxStreamInterruptedRetries, len(result.text)))
+				continue
+			}
 			logx.Errorf("upstream chat: %v", result.err)
 			metricsReqFail(uiModel)
 			if isCommitGenerationPending() {
@@ -1012,11 +1096,6 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	metricsAddLog("info", fmt.Sprintf("done model=%s out_tokens~%d tools=%d cacheKey=%v", uiModel, tout, toolN, chatOpt.PromptCacheKey != ""))
 	logx.Infof("chat-like done text=%d thinkingText=%d effort=%s stream=%v model=%s", len(text), len(thinking), effort, cfg.Features.EnableStream, model)
 }
-
-
-
-
-
 
 // isWriteEditCascadeTool 新建/写入/编辑类工具。
 func isWriteEditCascadeTool(name string) bool {
@@ -1240,7 +1319,6 @@ func (s *Server) writeProtoRPC(w http.ResponseWriter, method string, payload []b
 	s.writeProto(w, payload)
 }
 
-
 // writeChatProxyError 混合模式官方聊天失败时，返回可被 Cascade 显示的错误 delta，避免空响应变 Internal error。
 func (s *Server) writeChatProxyError(w http.ResponseWriter, method string, body, raw []byte, msg string) {
 	plain := body
@@ -1302,7 +1380,6 @@ func (s *Server) appendRPC(rec map[string]any) {
 	defer f.Close()
 	_, _ = f.Write(b)
 }
-
 
 func methodName(path string) string {
 	// /_route/api_server/exa.xxx.Service/Method
@@ -1466,11 +1543,11 @@ func jsonString(s string) string {
 	return string(b)
 }
 
-
 // shouldProxyOfficial 混合模式（pure_local=false）策略，对齐 dao 类「登录官方 + 能力分流」：
 //   - 官方：GetUserJwt / GetProfileData（真实账号 session）、以及未列入本地的 RPC
 //   - 本地：GetUserStatus（伪装 Pro）、模型列表、容量/限流 stub、Ping 等
 //   - 聊天默认本地；Fast Context 在 serveRPC 里单独透传官方
+//
 // pure_local=true 时全部不透传。
 func (s *Server) shouldProxyOfficial(method string) bool {
 	// 仅单机：全部 RPC 本地处理，不透传 server.codeium.com
@@ -1479,15 +1556,14 @@ func (s *Server) shouldProxyOfficial(method string) bool {
 	return false
 }
 
-
 // shouldProxyChatOfficial 混合模式聊天分流（保守，避免把主 Cascade 误送官方导致 Internal error）：
-//  默认本地 BYOK；仅在明确 Fast Context 或明确官方模型枚举时透传官方。
+//
+//	默认本地 BYOK；仅在明确 Fast Context 或明确官方模型枚举时透传官方。
 func (s *Server) shouldProxyChatOfficial(method string, plain []byte) bool {
 	// 仅单机：聊天（含 Fast Context）全部本地，永不透传官方
 	_, _, _ = s, method, plain
 	return false
 }
-
 
 func (s *Server) proxyOfficial(w http.ResponseWriter, r *http.Request, raw []byte) error {
 	// 映射到官方路径：去掉 /_route/api_server 前缀

@@ -24,14 +24,20 @@ func New() *Client {
 }
 
 type messageReq struct {
-	Model       string    `json:"model"`
-	MaxTokens   int       `json:"max_tokens"`
-	System      string    `json:"system,omitempty"`
-	Messages    []msg     `json:"messages"`
-	Stream      bool      `json:"stream"`
-	Temperature *float64  `json:"temperature,omitempty"`
-	TopP        *float64  `json:"top_p,omitempty"`
-	Tools       []toolDef `json:"tools,omitempty"`
+	Model       string          `json:"model"`
+	MaxTokens   int             `json:"max_tokens"`
+	System      string          `json:"system,omitempty"`
+	Messages    []msg           `json:"messages"`
+	Stream      bool            `json:"stream"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	TopP        *float64        `json:"top_p,omitempty"`
+	Thinking    *thinkingConfig `json:"thinking,omitempty"`
+	Tools       []toolDef       `json:"tools,omitempty"`
+}
+
+type thinkingConfig struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens"`
 }
 
 type msg struct {
@@ -138,6 +144,8 @@ func (c *Client) StreamChat(ctx context.Context, baseURL, apiKey, model string, 
 		return openai.Usage{}, openai.HumanizeHTTPError(resp.StatusCode, string(b))
 	}
 	var usage openai.Usage
+	sawStop := false
+	sawContent := false
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 	for sc.Scan() {
@@ -169,7 +177,12 @@ func (c *Client) StreamChat(ctx context.Context, baseURL, apiKey, model string, 
 		if json.Unmarshal([]byte(payload), &ev) != nil {
 			continue
 		}
+		if ev.Type == "message_stop" {
+			sawStop = true
+			continue
+		}
 		if ev.Type == "content_block_delta" && ev.Delta.Text != "" {
+			sawContent = true
 			if err := onDelta(openai.StreamDelta{Content: ev.Delta.Text}); err != nil {
 				return usage, err
 			}
@@ -183,7 +196,14 @@ func (c *Client) StreamChat(ctx context.Context, baseURL, apiKey, model string, 
 			usage.CompletionTokens = ev.Message.Usage.OutputTokens
 		}
 	}
-	return usage, sc.Err()
+	if err := sc.Err(); err != nil {
+		return usage, err
+	}
+	if sawContent && !sawStop {
+		// Anthropic 协议以 message_stop 结束；流中断说明中转把连接掐了。
+		return usage, openai.ErrStreamInterrupted
+	}
+	return usage, nil
 }
 
 func (c *Client) build(model string, messages []openai.ChatMessage, stream bool, opt openai.ChatOptions) ([]byte, error) {
@@ -195,6 +215,18 @@ func (c *Client) build(model string, messages []openai.ChatMessage, stream bool,
 	req := messageReq{
 		Model: model, MaxTokens: maxTok, System: sys, Messages: msgs, Stream: stream,
 		Temperature: opt.Temperature, TopP: opt.TopP,
+	}
+	if strings.TrimSpace(opt.ThinkingType) != "" || opt.ThinkingBudgetTokens > 0 {
+		if !strings.EqualFold(strings.TrimSpace(opt.ThinkingType), "enabled") {
+			return nil, fmt.Errorf("anthropic thinking_type must be enabled when thinking is configured")
+		}
+		if opt.ThinkingBudgetTokens <= 0 {
+			return nil, fmt.Errorf("anthropic thinking_budget_tokens must be > 0")
+		}
+		if opt.ThinkingBudgetTokens >= maxTok {
+			return nil, fmt.Errorf("anthropic thinking_budget_tokens(%d) must be less than max_tokens(%d)", opt.ThinkingBudgetTokens, maxTok)
+		}
+		req.Thinking = &thinkingConfig{Type: "enabled", BudgetTokens: opt.ThinkingBudgetTokens}
 	}
 	for _, t := range opt.Tools {
 		req.Tools = append(req.Tools, toolDef{

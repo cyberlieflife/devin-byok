@@ -10,6 +10,11 @@ dist/
 *.zip
 *.sha256
 
+# built binaries (root)
+/devin-byok
+/devin-byok-gui
+/ls-wrapper
+
 # ide / os
 .idea/
 .vscode/

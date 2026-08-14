@@ -13,23 +13,45 @@
       <img class="logo" src="/ui/logo.png" alt="Devin BYOK" width="36" height="36"/>
       <div>
         <div class="title">Devin BYOK</div>
-        <div class="sub">Monitor · Models · Settings</div>
+        <div class="sub">本地模型接入控制台</div>
       </div>
     </div>
     <div class="top-actions">
-      <span class="pill" id="apiPill"><i class="dot" id="apiDot"></i><span id="apiText">检测中</span></span>
-      <button class="btn btn-secondary" id="btnSettings" onclick="showPage('settings')">设置</button>
-      <button class="btn btn-primary" onclick="showPage('monitor')">监控</button>
-      <button class="btn btn-secondary" onclick="showPage('models')">模型</button>
-      <button class="btn btn-secondary" onclick="showPage('prompts')">提示词</button>
+      <span class="pill" id="apiPill"><i class="dot" id="apiDot"></i><span id="apiText">管理端检测中</span></span>
+      <button class="btn btn-secondary btn-nav" id="btnSettings" data-page="settings" onclick="showPage('settings')">设置</button>
+      <button class="btn btn-secondary btn-nav active" data-page="monitor" onclick="showPage('monitor')">监控</button>
+      <button class="btn btn-secondary btn-nav" data-page="models" onclick="showPage('models')">模型</button>
+      <button class="btn btn-secondary btn-nav" data-page="prompts" onclick="showPage('prompts')">提示词</button>
     </div>
   </header>
 
   <!-- MONITOR -->
   <main id="page-monitor" class="page active">
-    <section class="hero">
-      <h1>运行监控</h1>
-      <p class="muted">请求、缓存、Token 与模型使用一览</p>
+    <section class="service-console" id="serviceConsole">
+      <div class="service-main">
+        <div class="service-indicator" id="serviceIndicator" aria-hidden="true"></div>
+        <div class="service-copy">
+          <div class="eyebrow">BYOK SERVICE</div>
+          <h1 id="serviceTitle">正在检查本地服务</h1>
+          <p id="serviceMessage">读取账户、Devin 和本地路由状态…</p>
+        </div>
+      </div>
+      <div class="service-actions">
+        <button class="btn btn-primary btn-main-action" id="btnServiceStart" onclick="control('start')">启用并一键导入</button>
+        <button class="btn btn-danger" id="btnServiceStop" onclick="control('stop')">停止并恢复</button>
+        <button class="btn btn-secondary" id="btnRestartDevin" onclick="restartDevin()">重启 Devin</button>
+      </div>
+      <div class="service-facts">
+        <div><span>本地账户</span><strong id="factAccount">检测中</strong></div>
+        <div><span>默认模型</span><strong id="factModel">-</strong></div>
+        <div><span>Devin</span><strong id="factDevin">检测中</strong></div>
+        <div><span>配置状态</span><strong id="factConfig">检测中</strong></div>
+      </div>
+    </section>
+
+    <section class="section-head">
+      <div><h2>运行概览</h2><p class="muted">请求、缓存、Token 与模型使用</p></div>
+      <button class="btn btn-secondary btn-compact" onclick="refreshAll()">刷新</button>
     </section>
     <div class="stat-grid">
       <div class="card stat">
@@ -64,7 +86,7 @@
       </div>
     </div>
     
-    <div class="two-col" style="margin-top:12px">
+    <div class="two-col feature-usage">
       <div class="card">
         <div class="card-h">功能调用</div>
         <div class="stat-grid" style="grid-template-columns:1fr 1fr;gap:8px">
@@ -92,11 +114,6 @@
         <span class="muted small" id="uptime">uptime —</span>
       </div>
       <div id="logBox" class="log-box mono"></div>
-    </div>
-    <div class="row gap">
-      <button class="btn btn-primary" onclick="control('start')">启动服务</button>
-      <button class="btn btn-danger" onclick="control('stop')">停止服务</button>
-      <button class="btn btn-secondary" onclick="refreshAll()">刷新</button>
     </div>
   </main>
 
@@ -200,6 +217,37 @@
       <h1>设置</h1>
       <p class="muted">供应商以外的运行策略（工具 / 流式 / 超时）</p>
     </section>
+    <section class="card local-account" aria-labelledby="localAccountTitle">
+      <div class="row-between local-account-head">
+        <div>
+          <div class="card-h" id="localAccountTitle">本地虚拟账户</div>
+          <div class="local-account-state" id="localAccountState">检测中…</div>
+        </div>
+        <span class="account-badge" id="localAccountBadge">未创建</span>
+      </div>
+      <div class="account-fields" id="localAccountFields" hidden>
+        <div><span>名称</span><strong id="localAccountName">-</strong></div>
+        <div><span>邮箱</span><strong id="localAccountEmail">-</strong></div>
+        <div><span>账户 ID</span><strong id="localAccountID">-</strong></div>
+        <div><span>本地密钥</span><strong id="localAccountKey">-</strong></div>
+      </div>
+      <div class="row gap local-account-actions">
+        <button class="btn btn-primary" id="btnImportLocalAccount" onclick="importLocalAccount()">一键创建并导入</button>
+        <button class="btn btn-secondary" id="btnRefreshLocalAccount" onclick="refreshLocalAccount()">刷新状态</button>
+      </div>
+    </section>
+
+    <section class="utility-band">
+      <div>
+        <div class="card-h">数据与恢复</div>
+        <p>聊天导出保留 Devin 原始数据库及 WAL 文件；停止服务会恢复启用前的 Devin 设置。</p>
+        <div class="export-result" id="chatExportResult"></div>
+      </div>
+      <div class="row utility-actions">
+        <button class="btn btn-secondary" id="btnExportChats" onclick="exportChats()">导出聊天记录</button>
+        <button class="btn btn-danger" id="btnRestoreSettings" onclick="control('stop')">恢复 Devin 原配置</button>
+      </div>
+    </section>
     <div class="two-col">
       <div class="card">
         <div class="card-h">说明</div>
@@ -221,6 +269,10 @@
           </select>
         </div>
         <div class="field"><label>tools.timeout_sec（有工具时的聊天总超时，秒；命令/写入假流式保活依赖此值）</label><input id="tools_timeout_sec" type="number"/></div>
+        <div class="card-h" style="margin-top:12px">质量模式</div>
+        <label class="check"><input type="checkbox" id="quality_enabled" checked/> 启用可靠性提示词</label>
+        <div class="field"><label for="quality_mode">模式</label><select id="quality_mode"><option value="fast">fast</option><option value="balanced" selected>balanced</option><option value="verified">verified</option></select></div>
+        <div class="field"><label for="max_verification_rounds">最大验证轮数</label><input id="max_verification_rounds" type="number" min="1" value="1"/></div>
         <label class="check"><input type="checkbox" id="enable_stream"/> 流式输出</label>
         <label class="check"><input type="checkbox" id="enable_cascade_tools"/> Cascade 工具</label>
         <label class="check"><input type="checkbox" id="pure_local" checked disabled/> 纯本地 pure_local（已强制：仅单机，混合模式已取消）</label>
@@ -233,7 +285,7 @@
   
     <div class="card" style="margin-top:16px">
       <div class="card-h">桌面与自启</div>
-      <p class="muted small">开机自启、启动最小化到托盘、最小化时托盘化（请用 devin-byok-gui.exe）。服务 start 会自动 apply，stop 会自动 restore。</p>
+      <p class="muted small">开机自启、启动最小化到托盘、最小化时托盘化。启用会自动导入，停止会自动恢复。</p>
       <label class="check"><input type="checkbox" id="desktop_autostart"/> 开机自动启动服务（start + apply）</label>
       <label class="check"><input type="checkbox" id="desktop_start_minimized"/> 启动 GUI 时最小化到托盘</label>
       <label class="check"><input type="checkbox" id="desktop_minimize_to_tray"/> 最小化窗口时隐藏到托盘</label>
@@ -264,11 +316,11 @@
 
 <!-- modal -->
 <div class="modal-mask" id="familyModal" hidden>
-  <div class="modal card">
+  <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="familyModalTitle">
     <div class="card-h" id="familyModalTitle">添加模型</div>
     <input type="hidden" id="f_uid" value=""/>
-    <div class="field"><label>显示名 Label</label><input id="f_label" placeholder="Grok 4.5"/></div>
-    <div class="field"><label>上游模型 ID</label><input id="f_upstream" placeholder="grok-4.5"/></div>
+    <div class="field"><label for="f_label">显示名 Label</label><input id="f_label" autocomplete="off" spellcheck="false" placeholder="Grok 4.5"/></div>
+    <div class="field"><label for="f_upstream">上游模型 ID</label><input id="f_upstream" autocomplete="off" spellcheck="false" placeholder="grok-4.5"/></div>
     <div class="muted small" id="f_uid_hint">Family UID 将自动生成为：-</div>
     <div class="field"><label>接口类型</label>
       <select id="f_provider">
@@ -277,10 +329,13 @@
         <option value="anthropic">Anthropic Messages</option>
       </select>
     </div>
-    <div class="field"><label>Base URL</label><input id="f_base" placeholder="http://localhost:8317/v1"/></div>
-    <div class="field"><label>API Key（留空则不修改已有 Key）</label><input id="f_key" type="password" placeholder="sk-..."/></div>
-    <div class="field"><label>context_window</label><input id="f_ctx" type="number" value="128000"/></div>
-    <div class="field"><label>max_tokens（输出）</label><input id="f_max" type="number" value="8192"/></div>
+    <div class="field"><label for="f_base">Base URL</label><input id="f_base" type="url" autocomplete="url" spellcheck="false" placeholder="http://localhost:8317/v1"/></div>
+    <div class="field"><label for="f_key">API Key（编辑时留空表示保留原 Key）</label><input id="f_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="sk-..."/></div>
+    <div class="field"><label for="f_ctx">context_window</label><input id="f_ctx" type="number" inputmode="numeric" value="128000"/></div>
+    <div class="field"><label for="f_max">max_tokens（输出）</label><input id="f_max" type="number" inputmode="numeric" value="8192"/></div>
+    <div class="field"><label for="f_thinking_type">Anthropic thinking</label><select id="f_thinking_type"><option value="">不启用</option><option value="enabled">enabled</option></select></div>
+    <div class="field"><label for="f_thinking_budget">thinking budget_tokens（小于 max_tokens）</label><input id="f_thinking_budget" type="number" inputmode="numeric" value="0"/></div>
+    <div class="field"><label for="f_thinking_param">OpenAI thinking 参数</label><input id="f_thinking_param" value="reasoning_effort"/></div>
     <div class="field"><label>思考强度（可多选）</label>
       <div class="chip-row" id="f_levels_box" style="margin-top:6px">
         <label class="check"><input type="checkbox" class="f-level" value="low" checked/> low</label>
@@ -304,12 +359,11 @@
 <!-- 底边栏：版本 + 更新状态 + 下载进度 -->
 <footer class="app-footer" id="appFooter">
   <div class="footer-left">
-    <span id="footerVersion">v1.2.8</span>
+    <span id="footerVersion">v1.0.0</span>
     <span class="footer-sep">·</span>
     <span id="footerUpdate">等待检查…</span>
   </div>
   <div class="footer-right">
-    <button type="button" class="footer-support" id="btnSupport" onclick="openSupportModal()">赞赏支持</button>
     <div class="footer-progress" id="footerProgressWrap" hidden>
       <div class="footer-progress-bar"><i id="footerProgressBar"></i></div>
       <span id="footerProgressText">0%</span>
@@ -329,19 +383,5 @@
     </div>
   </div>
 </div>
-
-
-<!-- 赞赏支持弹窗 -->
-<div class="modal-mask" id="supportModal" hidden onclick="if(event.target===this)dismissSupportModal()">
-  <div class="modal card support-modal" role="dialog" aria-labelledby="supportTitle">
-    <div class="card-h" id="supportTitle">赞赏支持</div>
-    <p class="support-text">如果觉得项目好可以赞赏我支持一下谢谢喵</p>
-    <img class="support-qr" src="/ui/support.jpg" alt="赞赏码" />
-    <div class="row gap" style="margin-top:14px;justify-content:center">
-      <button class="btn btn-primary" onclick="dismissSupportModal()">好的</button>
-    </div>
-  </div>
-</div>
-
 </body>
 </html>

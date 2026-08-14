@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"devin-byok/internal/platform"
 )
 
 // RuntimeMetrics 运行时监控指标。
@@ -30,17 +32,20 @@ type RuntimeMetrics struct {
 	CachedTokens     int64
 	CacheWriteTokens int64
 	// 功能维度统计（B8）
-	DeepWikiOK   int64
-	DeepWikiFail int64
-	CodeMapOK    int64
-	CodeMapFail  int64
-	CodeMapFast  int64
-	CodeMapSmart int64
-	CommitOK     int64
-	CommitFail   int64
+	DeepWikiOK      int64
+	DeepWikiFail    int64
+	CodeMapOK       int64
+	CodeMapFail     int64
+	CodeMapFast     int64
+	CodeMapSmart    int64
+	CommitOK        int64
+	CommitFail      int64
 	FastContextOK   int64
 	FastContextFail int64
-	FeatureModel map[string]int64
+	FeatureModel    map[string]int64
+	PromptRoutes    map[string]int64
+	PromptTasks     map[string]int64
+	PromptProfiles  map[string]int64
 
 	ModelCounts map[string]int64
 
@@ -55,17 +60,20 @@ type LogLine struct {
 
 // metricsPersist 持久化形状：不含 logs。
 type metricsPersist struct {
-	DeepWikiOK   int64            `json:"deepwiki_ok"`
-	DeepWikiFail int64            `json:"deepwiki_fail"`
-	CodeMapOK    int64            `json:"codemap_ok"`
-	CodeMapFail  int64            `json:"codemap_fail"`
-	CodeMapFast  int64            `json:"codemap_fast"`
-	CodeMapSmart int64            `json:"codemap_smart"`
-	CommitOK     int64            `json:"commit_ok"`
-	CommitFail   int64            `json:"commit_fail"`
-	FastContextOK   int64         `json:"fast_context_ok"`
-	FastContextFail int64         `json:"fast_context_fail"`
-	FeatureModel map[string]int64 `json:"feature_model"`
+	DeepWikiOK      int64            `json:"deepwiki_ok"`
+	DeepWikiFail    int64            `json:"deepwiki_fail"`
+	CodeMapOK       int64            `json:"codemap_ok"`
+	CodeMapFail     int64            `json:"codemap_fail"`
+	CodeMapFast     int64            `json:"codemap_fast"`
+	CodeMapSmart    int64            `json:"codemap_smart"`
+	CommitOK        int64            `json:"commit_ok"`
+	CommitFail      int64            `json:"commit_fail"`
+	FastContextOK   int64            `json:"fast_context_ok"`
+	FastContextFail int64            `json:"fast_context_fail"`
+	FeatureModel    map[string]int64 `json:"feature_model"`
+	PromptRoutes    map[string]int64 `json:"prompt_routes"`
+	PromptTasks     map[string]int64 `json:"prompt_tasks"`
+	PromptProfiles  map[string]int64 `json:"prompt_profiles"`
 
 	ReqTotal         int64            `json:"req_total"`
 	ReqOK            int64            `json:"req_ok"`
@@ -83,19 +91,17 @@ type metricsPersist struct {
 }
 
 var runtimeStats = &RuntimeMetrics{
-	StartedAt:   time.Now(),
-	ModelCounts: map[string]int64{},
-	logs:        make([]LogLine, 0, 256),
-		FeatureModel: map[string]int64{},
+	StartedAt:    time.Now(),
+	ModelCounts:  map[string]int64{},
+	logs:         make([]LogLine, 0, 256),
+	FeatureModel: map[string]int64{},
+	PromptRoutes: map[string]int64{}, PromptTasks: map[string]int64{}, PromptProfiles: map[string]int64{},
 }
 
 func metricsPath() string {
-	if app := os.Getenv("APPDATA"); app != "" {
-		dir := filepath.Join(app, "devin-byok")
-		_ = os.MkdirAll(dir, 0o755)
-		return filepath.Join(dir, "metrics.json")
-	}
-	return filepath.Join("work", "metrics.json")
+	dir := platform.DataDir()
+	_ = os.MkdirAll(dir, 0o755)
+	return filepath.Join(dir, "metrics.json")
 }
 
 // MetricsLoad 启动时加载计数（不含日志）。
@@ -134,6 +140,15 @@ func MetricsLoad() {
 	if p.FeatureModel != nil {
 		runtimeStats.FeatureModel = p.FeatureModel
 	}
+	if p.PromptRoutes != nil {
+		runtimeStats.PromptRoutes = p.PromptRoutes
+	}
+	if p.PromptTasks != nil {
+		runtimeStats.PromptTasks = p.PromptTasks
+	}
+	if p.PromptProfiles != nil {
+		runtimeStats.PromptProfiles = p.PromptProfiles
+	}
 	if p.ModelCounts != nil {
 		runtimeStats.ModelCounts = p.ModelCounts
 	}
@@ -150,15 +165,16 @@ func MetricsSave() {
 		ToolCalls: runtimeStats.ToolCalls, CacheHit: runtimeStats.CacheHit, CacheMiss: runtimeStats.CacheMiss,
 		TokensIn: runtimeStats.TokensIn, TokensOut: runtimeStats.TokensOut,
 		PromptTokens: runtimeStats.PromptTokens,
-		DeepWikiOK: runtimeStats.DeepWikiOK, DeepWikiFail: runtimeStats.DeepWikiFail,
+		DeepWikiOK:   runtimeStats.DeepWikiOK, DeepWikiFail: runtimeStats.DeepWikiFail,
 		CodeMapOK: runtimeStats.CodeMapOK, CodeMapFail: runtimeStats.CodeMapFail,
 		CodeMapFast: runtimeStats.CodeMapFast, CodeMapSmart: runtimeStats.CodeMapSmart,
 		CommitOK: runtimeStats.CommitOK, CommitFail: runtimeStats.CommitFail,
 		FastContextOK: runtimeStats.FastContextOK, FastContextFail: runtimeStats.FastContextFail,
 		FeatureModel: runtimeStats.FeatureModel, CachedTokens: runtimeStats.CachedTokens,
 		CacheWriteTokens: runtimeStats.CacheWriteTokens,
-		ModelCounts:      map[string]int64{},
-		SavedAt:          time.Now().Format(time.RFC3339),
+		PromptRoutes:     runtimeStats.PromptRoutes, PromptTasks: runtimeStats.PromptTasks, PromptProfiles: runtimeStats.PromptProfiles,
+		ModelCounts: map[string]int64{},
+		SavedAt:     time.Now().Format(time.RFC3339),
 	}
 	for k, v := range runtimeStats.ModelCounts {
 		p.ModelCounts[k] = v
@@ -256,8 +272,34 @@ func metricsSnapshot() map[string]any {
 		"fast_context_ok":    runtimeStats.FastContextOK,
 		"fast_context_fail":  runtimeStats.FastContextFail,
 		"feature_model_rank": featureRank,
+		"prompt_routes":      sortedMetricMap(runtimeStats.PromptRoutes),
+		"prompt_tasks":       sortedMetricMap(runtimeStats.PromptTasks),
+		"prompt_profiles":    sortedMetricMap(runtimeStats.PromptProfiles),
 		"logs":               logs,
 	}
+}
+
+func sortedMetricMap(in map[string]int64) []map[string]any {
+	type kv struct {
+		k string
+		v int64
+	}
+	arr := make([]kv, 0, len(in))
+	for k, v := range in {
+		arr = append(arr, kv{k: k, v: v})
+	}
+	for i := 0; i < len(arr); i++ {
+		for j := i + 1; j < len(arr); j++ {
+			if arr[j].v > arr[i].v || (arr[j].v == arr[i].v && arr[j].k < arr[i].k) {
+				arr[i], arr[j] = arr[j], arr[i]
+			}
+		}
+	}
+	out := make([]map[string]any, 0, len(arr))
+	for _, it := range arr {
+		out = append(out, map[string]any{"id": it.k, "count": it.v})
+	}
+	return out
 }
 
 func metricsAddLog(level, msg string) {
@@ -283,6 +325,30 @@ func metricsAddPromptUsage(promptTok, cachedTok, cacheWriteTok, completionTok in
 	}
 	if promptTok > 0 {
 		runtimeStats.TokensIn += int64(promptTok)
+	}
+}
+
+// metricsPromptContext records routing and profile IDs only; it never stores
+// user text, API keys, or prompt bodies.
+func metricsPromptContext(route, task, quality, effort string, profiles []string, hash string) {
+	runtimeStats.mu.Lock()
+	defer runtimeStats.mu.Unlock()
+	if runtimeStats.PromptRoutes == nil {
+		runtimeStats.PromptRoutes = map[string]int64{}
+	}
+	if runtimeStats.PromptTasks == nil {
+		runtimeStats.PromptTasks = map[string]int64{}
+	}
+	if runtimeStats.PromptProfiles == nil {
+		runtimeStats.PromptProfiles = map[string]int64{}
+	}
+	runtimeStats.PromptRoutes[route+":"+quality+":"+effort]++
+	runtimeStats.PromptTasks[task]++
+	for _, id := range profiles {
+		runtimeStats.PromptProfiles[id]++
+	}
+	if hash != "" {
+		runtimeStats.PromptProfiles["hash:"+hash]++
 	}
 }
 
@@ -335,7 +401,6 @@ func estimateTokens(s string) int {
 	}
 	return t
 }
-
 
 func featureModelRankLocked() []map[string]any {
 	type kv struct {

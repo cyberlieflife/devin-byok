@@ -1,4 +1,4 @@
-﻿package promptstore
+package promptstore
 
 import (
 	"encoding/json"
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"devin-byok/internal/paths"
-	"devin-byok/internal/upstream/openai"
 )
 
 // Mode 提示词注入方式。
@@ -31,15 +30,19 @@ When creating or changing project files, use Cascade file tools — not the shel
 - Resolve paths against the workspace roots you were given. Do not overwrite unrelated files. After a write/edit, briefly confirm the path and what changed.
 `
 
-
-
 // Prompt 一条可开关的系统提示词。
 type Prompt struct {
-	ID      string `json:"id"`
-	Title   string `json:"title"`
-	Body    string `json:"body"`
-	Enabled bool   `json:"enabled"`
-	Mode    Mode   `json:"mode"` // append|prepend|replace
+	ID       string   `json:"id"`
+	Title    string   `json:"title"`
+	Body     string   `json:"body"`
+	Enabled  bool     `json:"enabled"`
+	Mode     Mode     `json:"mode"`             // append|prepend|replace
+	Scope    string   `json:"scope,omitempty"`  // global|model|route|task
+	Routes   []string `json:"routes,omitempty"` // chat|fast_context|deepwiki|codemap
+	Models   []string `json:"models,omitempty"` // model id or family uid
+	Tasks    []string `json:"tasks,omitempty"`  // coding|debug|research|review|explain|general
+	Priority int      `json:"priority,omitempty"`
+	Builtin  bool     `json:"builtin,omitempty"`
 }
 
 type fileShape struct {
@@ -162,80 +165,6 @@ func Delete(id string) ([]Prompt, error) {
 		return nil, err
 	}
 	return out, nil
-}
-
-// ApplyToMessages 将固定内置提示 + 启用中的自定义提示词注入到 chat messages。
-func ApplyToMessages(msgs []openai.ChatMessage) []openai.ChatMessage {
-	list, _ := Load()
-	var replaceBody string
-	var prepend []string
-	var appendNotes []string
-	// 固定内置：始终 append（不可被用户列表关闭）
-	appendNotes = append(appendNotes, BuiltinFileToolsPrompt)
-	for _, p := range list {
-		if !p.Enabled || strings.TrimSpace(p.Body) == "" {
-			continue
-		}
-		switch p.Mode {
-		case ModeReplace:
-			replaceBody = p.Body
-		case ModePrepend:
-			prepend = append(prepend, p.Body)
-		default:
-			appendNotes = append(appendNotes, p.Body)
-		}
-	}
-	if replaceBody != "" {
-		// 替换首条 system；若无 system 则插入
-		found := false
-		out := make([]openai.ChatMessage, len(msgs))
-		copy(out, msgs)
-		for i := range out {
-			if out[i].Role == "system" {
-				out[i].Content = replaceBody
-				found = true
-				break
-			}
-		}
-		if !found {
-			out = append([]openai.ChatMessage{{Role: "system", Content: replaceBody}}, out...)
-		}
-		msgs = out
-	}
-	// prepend：插在首条 system 之后（或最前）
-	for i := len(prepend) - 1; i >= 0; i-- {
-		note := prepend[i]
-		msgs = injectNote(msgs, note, true)
-	}
-	for _, note := range appendNotes {
-		msgs = injectNote(msgs, note, false)
-	}
-	return msgs
-}
-
-func injectNote(msgs []openai.ChatMessage, note string, front bool) []openai.ChatMessage {
-	note = strings.TrimSpace(note)
-	if note == "" {
-		return msgs
-	}
-	// 简单去重
-	for _, m := range msgs {
-		if m.Role == "system" && strings.Contains(openai.TextContent(m.Content), note) {
-			return msgs
-		}
-	}
-	sys := openai.ChatMessage{Role: "system", Content: note}
-	if front {
-		// 前置：成为最早的 system
-		return append([]openai.ChatMessage{sys}, msgs...)
-	}
-	if len(msgs) > 0 && msgs[0].Role == "system" {
-		out := make([]openai.ChatMessage, 0, len(msgs)+1)
-		out = append(out, msgs[0], sys)
-		out = append(out, msgs[1:]...)
-		return out
-	}
-	return append([]openai.ChatMessage{sys}, msgs...)
 }
 
 func newID() string {
