@@ -13,11 +13,11 @@
       <img class="logo" src="/ui/logo.png" alt="Devin BYOK" width="36" height="36"/>
       <div>
         <div class="title">Devin BYOK</div>
-        <div class="sub">Monitor · Models · Settings</div>
+        <div class="sub">本地模型接入控制台</div>
       </div>
     </div>
     <div class="top-actions">
-      <span class="pill" id="apiPill"><i class="dot" id="apiDot"></i><span id="apiText">检测中</span></span>
+      <span class="pill" id="apiPill"><i class="dot" id="apiDot"></i><span id="apiText">管理端检测中</span></span>
       <button class="btn btn-secondary btn-nav" id="btnSettings" data-page="settings" onclick="showPage('settings')">设置</button>
       <button class="btn btn-primary btn-nav active" data-page="monitor" onclick="showPage('monitor')">监控</button>
       <button class="btn btn-secondary btn-nav" data-page="models" onclick="showPage('models')">模型</button>
@@ -27,9 +27,31 @@
 
   <!-- MONITOR -->
   <main id="page-monitor" class="page active">
-    <section class="hero">
-      <h1>运行监控</h1>
-      <p class="muted">请求、缓存、Token 与模型使用一览</p>
+    <section class="service-console" id="serviceConsole">
+      <div class="service-main">
+        <div class="service-indicator" id="serviceIndicator" aria-hidden="true"></div>
+        <div class="service-copy">
+          <div class="eyebrow">BYOK SERVICE</div>
+          <h1 id="serviceTitle">正在检查本地服务</h1>
+          <p id="serviceMessage">读取账户、Devin 和本地路由状态…</p>
+        </div>
+      </div>
+      <div class="service-actions">
+        <button class="btn btn-primary btn-main-action" id="btnServiceStart" onclick="control('start')">启用并一键导入</button>
+        <button class="btn btn-danger" id="btnServiceStop" onclick="control('stop')">停止并恢复</button>
+        <button class="btn btn-secondary" id="btnRestartDevin" onclick="restartDevin()">重启 Devin</button>
+      </div>
+      <div class="service-facts">
+        <div><span>本地账户</span><strong id="factAccount">检测中</strong></div>
+        <div><span>默认模型</span><strong id="factModel">-</strong></div>
+        <div><span>Devin</span><strong id="factDevin">检测中</strong></div>
+        <div><span>配置状态</span><strong id="factConfig">检测中</strong></div>
+      </div>
+    </section>
+
+    <section class="section-head">
+      <div><h2>运行概览</h2><p class="muted">请求、缓存、Token 与模型使用</p></div>
+      <button class="btn btn-secondary btn-compact" onclick="refreshAll()">刷新</button>
     </section>
     <div class="stat-grid">
       <div class="card stat">
@@ -64,7 +86,7 @@
       </div>
     </div>
     
-    <div class="two-col" style="margin-top:12px">
+    <div class="two-col feature-usage">
       <div class="card">
         <div class="card-h">功能调用</div>
         <div class="stat-grid" style="grid-template-columns:1fr 1fr;gap:8px">
@@ -92,11 +114,6 @@
         <span class="muted small" id="uptime">uptime —</span>
       </div>
       <div id="logBox" class="log-box mono"></div>
-    </div>
-    <div class="row gap">
-      <button class="btn btn-primary" onclick="control('start')">启动服务</button>
-      <button class="btn btn-danger" onclick="control('stop')">停止服务</button>
-      <button class="btn btn-secondary" onclick="refreshAll()">刷新</button>
     </div>
   </main>
 
@@ -219,6 +236,18 @@
         <button class="btn btn-secondary" id="btnRefreshLocalAccount" onclick="refreshLocalAccount()">刷新状态</button>
       </div>
     </section>
+
+    <section class="utility-band">
+      <div>
+        <div class="card-h">数据与恢复</div>
+        <p>聊天导出保留 Devin 原始数据库及 WAL 文件；停止服务会恢复启用前的 Devin 设置。</p>
+        <div class="export-result" id="chatExportResult"></div>
+      </div>
+      <div class="row utility-actions">
+        <button class="btn btn-secondary" id="btnExportChats" onclick="exportChats()">导出聊天记录</button>
+        <button class="btn btn-danger" id="btnRestoreSettings" onclick="control('stop')">恢复 Devin 原配置</button>
+      </div>
+    </section>
     <div class="two-col">
       <div class="card">
         <div class="card-h">说明</div>
@@ -256,7 +285,7 @@
   
     <div class="card" style="margin-top:16px">
       <div class="card-h">桌面与自启</div>
-      <p class="muted small">开机自启、启动最小化到托盘、最小化时托盘化（请用 devin-byok-gui.exe）。服务 start 会自动 apply，stop 会自动 restore。</p>
+      <p class="muted small">开机自启、启动最小化到托盘、最小化时托盘化。启用会自动导入，停止会自动恢复。</p>
       <label class="check"><input type="checkbox" id="desktop_autostart"/> 开机自动启动服务（start + apply）</label>
       <label class="check"><input type="checkbox" id="desktop_start_minimized"/> 启动 GUI 时最小化到托盘</label>
       <label class="check"><input type="checkbox" id="desktop_minimize_to_tray"/> 最小化窗口时隐藏到托盘</label>
@@ -330,12 +359,11 @@
 <!-- 底边栏：版本 + 更新状态 + 下载进度 -->
 <footer class="app-footer" id="appFooter">
   <div class="footer-left">
-    <span id="footerVersion">v1.2.8</span>
+    <span id="footerVersion">v1.0.0</span>
     <span class="footer-sep">·</span>
     <span id="footerUpdate">等待检查…</span>
   </div>
   <div class="footer-right">
-    <button type="button" class="footer-support" id="btnSupport" onclick="openSupportModal()">赞赏支持</button>
     <div class="footer-progress" id="footerProgressWrap" hidden>
       <div class="footer-progress-bar"><i id="footerProgressBar"></i></div>
       <span id="footerProgressText">0%</span>
@@ -355,19 +383,5 @@
     </div>
   </div>
 </div>
-
-
-<!-- 赞赏支持弹窗 -->
-<div class="modal-mask" id="supportModal" hidden onclick="if(event.target===this)dismissSupportModal()">
-  <div class="modal card support-modal" role="dialog" aria-labelledby="supportTitle">
-    <div class="card-h" id="supportTitle">赞赏支持</div>
-    <p class="support-text">如果觉得项目好可以赞赏我支持一下谢谢喵</p>
-    <img class="support-qr" src="/ui/support.jpg" alt="赞赏码" />
-    <div class="row gap" style="margin-top:14px;justify-content:center">
-      <button class="btn btn-primary" onclick="dismissSupportModal()">好的</button>
-    </div>
-  </div>
-</div>
-
 </body>
 </html>

@@ -165,6 +165,10 @@ func bringExistingToFront() {
 	showMainWindow()
 }
 
+func openBrowser(url string) {
+	_ = exec.Command("cmd", "/c", "start", "", url).Start()
+}
+
 func ensureSingleInstance() bool {
 	createMutex := kernel32.NewProc("CreateMutexW")
 	closeHandle := kernel32.NewProc("CloseHandle")

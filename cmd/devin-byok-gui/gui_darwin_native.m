@@ -1,3 +1,5 @@
+//go:build darwin
+
 #import <Cocoa/Cocoa.h>
 
 void devin_order_out(void *window) {

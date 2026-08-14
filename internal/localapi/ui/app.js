@@ -130,9 +130,34 @@ async function refreshMetrics(){
 async function refreshStatus(){
   try{
     const s=await jget('/api/status');
-    setDot(true,'API 在线');
-    document.getElementById('cfgPath').textContent='config: '+(s.config_path||'-');
+    setDot(true,'管理端在线');
+    renderServiceStatus(s);
+    const cfgPath=document.getElementById('cfgPath');
+    if(cfgPath) cfgPath.textContent='config: '+(s.config_path||'-');
   }catch(e){ setDot(false,'API 离线') }
+}
+function renderServiceStatus(s){
+  const active=!!s.service_active;
+  const indicator=document.getElementById('serviceIndicator');
+  const title=document.getElementById('serviceTitle');
+  const message=document.getElementById('serviceMessage');
+  const start=document.getElementById('btnServiceStart');
+  const stop=document.getElementById('btnServiceStop');
+  if(indicator) indicator.className='service-indicator '+(active?'active':'stopped');
+  if(title) title.textContent=active?'本地模型服务已启用':'本地模型服务未启用';
+  if(message) message.textContent=active
+    ? (s.restart_required?'配置已导入。重启 Devin 后加载当前模型。':'Devin 已连接本地模型服务。')
+    : '管理端保持在线，可随时一键创建虚拟账户并导入。';
+  if(start){ start.disabled=active; start.textContent=active?'已启用':'启用并一键导入'; }
+  if(stop) stop.disabled=!active;
+  const account=document.getElementById('factAccount');
+  const model=document.getElementById('factModel');
+  const devin=document.getElementById('factDevin');
+  const config=document.getElementById('factConfig');
+  if(account) account.textContent=s.account_imported?'已导入':(s.account_exists?'待导入':'未创建');
+  if(model) model.textContent=s.default_model_name||s.default_model||'-';
+  if(devin) devin.textContent=s.devin_running?'正在运行':'未运行';
+  if(config) config.textContent=active?'已应用':'原始配置';
 }
 async function refreshLocalAccount(){
   const state=document.getElementById('localAccountState');
@@ -157,6 +182,8 @@ async function refreshLocalAccount(){
     state.textContent=imported?'已连接本地服务，重启 Devin 后生效':(account.message||'账户已创建，尚未导入 Devin');
     badge.textContent=imported?'已导入':'待导入';
     badge.className='account-badge '+(imported?'ok':'pending');
+    const button=document.getElementById('btnImportLocalAccount');
+    if(button) button.textContent=imported?'重新导入配置':'一键创建并导入';
   }catch(e){
     fields.hidden=true;
     state.textContent=e.message||String(e);
@@ -175,6 +202,7 @@ async function importLocalAccount(){
     if(account.ok===false) throw new Error(account.message||'导入失败');
     toast(account.message||'本地虚拟账户已导入');
     await Promise.all([refreshLocalAccount(),refreshConfig()]);
+    await refreshStatus();
   }catch(e){
     toast('导入失败: '+(e.message||e));
     await refreshLocalAccount();
@@ -268,38 +296,15 @@ async function testUpstream(){
   }catch(e){ el.textContent=e.message; toast(e.message) }
 }
 async function control(action){
+  const button=document.getElementById(action==='start'?'btnServiceStart':'btnServiceStop');
+  const original=button?button.textContent:'';
+  if(button){ button.disabled=true; button.textContent=action==='start'?'正在启用…':'正在恢复…'; }
   try{
-    // 优先原生绑定（API 已停也能 start）
-    if(action==='start' && typeof window.nativeStart==='function'){
-      const msg = await window.nativeStart();
-      toast(msg==='ok'?'服务已启动':msg);
-      await waitOnline(8000);
-      await refreshAll();
-      return;
-    }
-    if(action==='stop' && typeof window.nativeStop==='function'){
-      // 先尽量走 API 优雅停（保存计数/清日志）；native 内部也会优先 HTTP
-      try{ await jsend('/api/control/stop','POST'); }catch(_e){}
-      const msg = await window.nativeStop();
-      toast('服务已停止（日志已清空，计数已保留）');
-      setDot(false,'API 离线');
-      // 日志区清空展示
-      const box=document.getElementById('logBox');
-      if(box) box.innerHTML='<div class="muted">服务已停止，日志已清空。计数/命中率已保留。</div>';
-      return;
-    }
     const res=await jsend('/api/control/'+action,'POST');
+    if(res.ok===false) throw new Error(res.message||'操作失败');
     toast(res.message||action);
-    if(action==='stop'){
-      setDot(false,'API 离线');
-      const box=document.getElementById('logBox');
-      if(box) box.innerHTML='<div class="muted">服务已停止，日志已清空。计数/命中率已保留。</div>';
-      return;
-    }
-    await waitOnline(8000);
     await refreshAll();
   }catch(e){
-    // 离线时 start 再试 native
     if(action==='start' && typeof window.nativeStart==='function'){
       try{
         const msg=await window.nativeStart();
@@ -310,7 +315,45 @@ async function control(action){
       }catch(e2){ toast(String(e2)); return }
     }
     toast(String(e.message||e));
+  }finally{
+    if(button){ button.disabled=false; button.textContent=original; }
+    await refreshStatus();
   }
+}
+
+async function restartDevin(){
+  const button=document.getElementById('btnRestartDevin');
+  if(!button) return;
+  const original=button.textContent;
+  button.disabled=true;
+  button.textContent='正在重启…';
+  try{
+    const result=await jsend('/api/devin/restart','POST');
+    if(result.ok===false) throw new Error(result.message||'重启失败');
+    toast(result.message||'Devin 已重启');
+    await refreshStatus();
+  }catch(e){ toast('重启失败: '+(e.message||e)); }
+  finally{ button.disabled=false; button.textContent=original; }
+}
+
+async function exportChats(){
+  const button=document.getElementById('btnExportChats');
+  const result=document.getElementById('chatExportResult');
+  if(!button) return;
+  const original=button.textContent;
+  button.disabled=true;
+  button.textContent='正在导出…';
+  if(result) result.textContent='正在创建聊天备份…';
+  try{
+    const data=await jsend('/api/chats/export','POST');
+    if(data.ok===false) throw new Error(data.message||'导出失败');
+    const text=(data.message||'导出完成')+'：'+(data.path||'');
+    if(result) result.textContent=text;
+    toast('聊天记录已导出');
+  }catch(e){
+    if(result) result.textContent='导出失败：'+(e.message||e);
+    toast('导出失败: '+(e.message||e));
+  }finally{ button.disabled=false; button.textContent=original; }
 }
 function waitOnline(ms){
   const t0=Date.now();
@@ -652,7 +695,7 @@ async function saveUpdatePrefs(){
 
 // ===== 底栏更新状态 + 弹窗 + 进度 =====
 // 与 internal/version.Version 保持一致（硬编码兜底，避免接口未就绪显示 v?）
-const APP_VERSION = '1.2.8';
+const APP_VERSION = '1.0.0';
 let __lastUpdateCheck = null;
 let __updateProgressTimer = null;
 let __updateModalForced = false;
@@ -698,7 +741,7 @@ function loadFooterVersion(){
     if(v && v.version){
       setFooterVersion(v.version);
       const sub=document.querySelector('.brand .sub');
-      if(sub){ sub.textContent = 'v'+v.version+' · Monitor · Models · Settings'; }
+      if(sub){ sub.textContent = 'v'+v.version+' · 本地模型接入控制台'; }
     }
   }).catch(()=>{ setFooterVersion(APP_VERSION); });
 }
@@ -750,15 +793,6 @@ function showUpdateModal(r, force){
   const later = document.getElementById('btnUpdateLater');
   if(later) later.hidden = false;
   modal.hidden = false;
-}
-
-function openSupportModal(){
-  const m = document.getElementById('supportModal');
-  if(m) m.hidden = false;
-}
-function dismissSupportModal(){
-  const m = document.getElementById('supportModal');
-  if(m) m.hidden = true;
 }
 
 function dismissUpdateModal(){
@@ -839,10 +873,7 @@ async function pollUpdateProgress(){
 }
 
 function startUpdateAutoCheck(){
-  // 打开程序立即检查；有新版本才弹窗
-  runUpdateCheck({showModal:true, force:false});
-  // 每小时
-  setInterval(()=>runUpdateCheck({showModal:true, force:false}), 3600*1000);
+  setFooterUpdate('可在设置中手动检查更新', false);
 }
 
 // 覆盖旧的 checkUpdate / applyUpdate，复用底栏逻辑

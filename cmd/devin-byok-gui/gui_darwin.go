@@ -126,6 +126,10 @@ func bringExistingToFront() {
 	_ = exec.Command("open", "-a", title).Start()
 }
 
+func openBrowser(url string) {
+	_ = exec.Command("open", url).Start()
+}
+
 func ensureSingleInstance() bool {
 	dir := platform.DataDir()
 	_ = os.MkdirAll(dir, 0o755)

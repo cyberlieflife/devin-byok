@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"time"
@@ -12,11 +11,11 @@ import (
 	"devin-byok/internal/config"
 	"devin-byok/internal/desktop"
 	"devin-byok/internal/devin"
+	"devin-byok/internal/extinstall"
 	"devin-byok/internal/ideinject"
 	"devin-byok/internal/localapi"
 	"devin-byok/internal/logx"
 	"devin-byok/internal/lsinstall"
-	"devin-byok/internal/extinstall"
 	"devin-byok/internal/paths"
 	"devin-byok/internal/platform"
 
@@ -65,10 +64,8 @@ func main() {
 	prefs := desktop.LoadPrefs()
 	systray.Register(onTrayReady, onTrayExit)
 
-	if err := startService(); err != nil {
-		logx.Warnf("start service: %v", err)
-	} else {
-		go autoInstallWrapper()
+	if err := startEmbedded(); err != nil {
+		logx.Warnf("start management server: %v", err)
 	}
 	waitAPI(80)
 
@@ -76,7 +73,7 @@ func main() {
 
 	w := guiCreateWindow(uiURL)
 	if w == nil {
-		_ = exec.Command("open", uiURL).Start()
+		openBrowser(uiURL)
 		select {}
 	}
 
@@ -184,33 +181,25 @@ func onTrayExit() {}
 
 func quitApp() {
 	_ = stopService()
+	closeEmbedded()
 	systray.Quit()
 	time.Sleep(80 * time.Millisecond)
 	os.Exit(0)
 }
 
 func startService() error {
-	return startEmbedded()
+	if err := startEmbedded(); err != nil {
+		return err
+	}
+	if !waitAPI(50) {
+		return fmt.Errorf("management API not ready")
+	}
+	return postControl("start")
 }
 
 func stopService() string {
-	embedMu.Lock()
-	hasEmbed := embedHTTP != nil
-	if hasEmbed {
-		_ = embedHTTP.Close()
-		embedHTTP = nil
-	}
-	embedMu.Unlock()
-	if hasEmbed {
-		_, _ = devin.RestorePortal()
-		_ = ideinject.RestoreContextUsageDonut()
-		return "ok"
-	}
-	client := &http.Client{Timeout: 3 * time.Second}
-	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:8787/api/control/stop", nil)
-	if err == nil {
-		if resp, err := client.Do(req); err == nil {
-			resp.Body.Close()
+	if online() {
+		if err := postControl("stop"); err == nil {
 			return "ok"
 		}
 	}
@@ -222,7 +211,6 @@ func stopService() string {
 
 func startEmbedded() error {
 	if online() {
-		applyFromConfig()
 		return nil
 	}
 	cfgPath := paths.FindConfig()
@@ -251,7 +239,33 @@ func startEmbedded() error {
 		}
 	}()
 	time.Sleep(250 * time.Millisecond)
-	applyFromConfig()
+	return nil
+}
+
+func closeEmbedded() {
+	embedMu.Lock()
+	hs := embedHTTP
+	embedHTTP = nil
+	embedMu.Unlock()
+	if hs != nil {
+		_ = hs.Close()
+	}
+}
+
+func postControl(action string) error {
+	client := &http.Client{Timeout: 20 * time.Second}
+	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:8787/api/control/"+action, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("control %s failed: HTTP %d", action, resp.StatusCode)
+	}
 	return nil
 }
 
@@ -260,18 +274,14 @@ func applyFromConfig() {
 	if err != nil {
 		return
 	}
-	if _, err := devin.ApplyPortal(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys); err != nil {
-		logx.Warnf("apply: %v", err)
-	} else {
-		logx.Infof("apply ok")
-	}
-	// 3.7.16: 写 dev 键（binaryPath 覆盖 + 多租户 + 关闭设置同步）
 	if wpath, err := lsinstall.MaterializeWrapper(); err == nil {
-		if err := devin.ApplyDevKeys(wpath); err != nil {
-			logx.Warnf("apply dev keys: %v", err)
+		if _, err := devin.ApplyLocalRuntime(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys, wpath); err != nil {
+			logx.Warnf("apply local runtime: %v", err)
 		} else {
-			logx.Infof("apply dev keys ok: %s", wpath)
+			logx.Infof("apply local runtime ok: %s", wpath)
 		}
+	} else {
+		logx.Warnf("materialize wrapper: %v", err)
 	}
 	// 3.7.16: 不再向 bundle 注入任何内容（ideinject 已停用）
 	if _, err := extinstall.InstallFromFS(extinstall.ExtFS, extinstall.ExtRoot); err != nil {
