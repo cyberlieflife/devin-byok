@@ -1,6 +1,7 @@
 package promptstore
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -44,6 +45,53 @@ func TestComposeInjectsReliabilityAndTaskProfile(t *testing.T) {
 	all := systemText(result.Messages)
 	if !strings.Contains(all, "Reliability Contract") || !strings.Contains(all, "Coding Execution") {
 		t.Fatalf("expected reliability and coding profiles, got %q", all)
+	}
+}
+
+func TestVerifiedModeInjectsExecutionLoop(t *testing.T) {
+	result := composeWithProfiles(testMessages(), ComposeContext{Route: "chat", QualityMode: "verified", UserText: "请修改实现并验证"}, nil)
+	if !containsString(result.ProfileIDs, "verification") {
+		t.Fatalf("verified profile missing: %v", result.ProfileIDs)
+	}
+	all := systemText(result.Messages)
+	for _, required := range []string{"约束账本", "机械验证", "反例审查", "最多三轮", "不得宣布完成"} {
+		if !strings.Contains(all, required) {
+			t.Fatalf("verified contract missing %q", required)
+		}
+	}
+}
+
+func TestBalancedModeDoesNotInjectVerifiedLoop(t *testing.T) {
+	result := composeWithProfiles(testMessages(), ComposeContext{Route: "chat", QualityMode: "balanced", UserText: "请修改实现"}, nil)
+	if containsString(result.ProfileIDs, "verification") || strings.Contains(systemText(result.Messages), "Verified Execution Loop") {
+		t.Fatal("balanced mode should not pay the verified-loop prompt cost")
+	}
+}
+
+func TestStrictOutputSkipsLongVerifiedProfiles(t *testing.T) {
+	result := composeWithProfiles(testMessages(), ComposeContext{
+		Route: "chat", QualityMode: "verified", UserText: "Return only the integer answer to 17*19.",
+	}, nil)
+	for _, absent := range []string{"core-reliability", "verification", "coding-execution"} {
+		if containsString(result.ProfileIDs, absent) {
+			t.Fatalf("strict output unexpectedly loaded %s: %v", absent, result.ProfileIDs)
+		}
+	}
+	for _, required := range []string{"constraint-audit", "output-contract"} {
+		if !containsString(result.ProfileIDs, required) {
+			t.Fatalf("strict output missing %s: %v", required, result.ProfileIDs)
+		}
+	}
+}
+
+func TestDetectStrictOutput(t *testing.T) {
+	for _, text := range []string{"Return only YES or NO.", "仅返回 JSON，不要解释", "Output exactly three items"} {
+		if !DetectStrictOutput(text) {
+			t.Fatalf("strict output not detected: %q", text)
+		}
+	}
+	if DetectStrictOutput("请实现该功能并运行测试") {
+		t.Fatal("normal coding task classified as strict output")
 	}
 }
 
@@ -165,6 +213,39 @@ func TestDetectTask(t *testing.T) {
 		if got := DetectTask(input); got != want {
 			t.Errorf("DetectTask(%q)=%q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestLegacyPromptJSONStillLoads(t *testing.T) {
+	legacy := `{"prompts":[{"id":"legacy-1","title":"Legacy","body":"LEGACY BODY","enabled":true,"mode":"append"}]}`
+	var fs fileShape
+	if err := json.Unmarshal([]byte(legacy), &fs); err != nil {
+		t.Fatalf("legacy JSON failed to load: %v", err)
+	}
+	if len(fs.Prompts) != 1 {
+		t.Fatalf("expected 1 prompt, got %d", len(fs.Prompts))
+	}
+	p := fs.Prompts[0]
+	if p.ID != "legacy-1" || p.Body != "LEGACY BODY" || !p.Enabled || p.Mode != ModeAppend {
+		t.Fatalf("legacy fields lost: %+v", p)
+	}
+	if p.Scope != "" || len(p.Routes) != 0 || len(p.Models) != 0 || len(p.Tasks) != 0 || p.Priority != 0 || p.Builtin {
+		t.Fatalf("new fields should default to zero values: %+v", p)
+	}
+	result := composeWithProfiles(testMessages(), ComposeContext{Route: "chat", QualityMode: "balanced"}, fs.Prompts)
+	if !strings.Contains(systemText(result.Messages), "LEGACY BODY") {
+		t.Fatalf("legacy profile not applied as append: %q", systemText(result.Messages))
+	}
+}
+
+func TestApplyToMessagesBackwardCompatible(t *testing.T) {
+	out := ApplyToMessages(testMessages())
+	if openai.TextContent(out[0].Content) != "ORIGINAL SYSTEM" {
+		t.Fatalf("legacy wrapper moved the original system message: %+v", out)
+	}
+	all := systemText(out)
+	if !strings.Contains(all, "Reliability Contract") {
+		t.Fatalf("legacy wrapper no longer injects the reliability contract: %q", all)
 	}
 }
 

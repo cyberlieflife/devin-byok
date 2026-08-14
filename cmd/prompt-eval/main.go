@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"devin-byok/internal/config"
 	"devin-byok/internal/paths"
 	"devin-byok/internal/promptstore"
+	"devin-byok/internal/upstream/anthropic"
 	"devin-byok/internal/upstream/openai"
 )
 
@@ -44,6 +46,9 @@ type result struct {
 	OptimizedScore float64    `json:"optimized_score"`
 	BaselineMS     int64      `json:"baseline_ms"`
 	OptimizedMS    int64      `json:"optimized_ms"`
+	BaselineOK     bool       `json:"baseline_ok"`
+	OptimizedOK    bool       `json:"optimized_ok"`
+	Order          string     `json:"order"`
 	Profiles       []string   `json:"profiles"`
 	Error          string     `json:"error,omitempty"`
 }
@@ -56,32 +61,37 @@ func main() {
 	if err != nil {
 		fatal("load config: " + err.Error())
 	}
-	modelID := strings.TrimSpace(os.Getenv("PROMPT_EVAL_MODEL"))
-	if modelID == "" {
-		modelID = cfg.DefaultModelID()
-	}
-	prov, ok := cfg.ResolveProvider(modelID)
-	if !ok || prov.UpstreamModel == "" {
-		fatal("model provider is not configured")
-	}
 	client := openai.New(cfg.Upstream)
-	maxRounds := 2
-	if raw := strings.TrimSpace(os.Getenv("PROMPT_EVAL_ROUNDS")); raw == "1" {
+	maxRounds := envInt("PROMPT_EVAL_ROUNDS", 2)
+	if maxRounds < 1 {
 		maxRounds = 1
 	}
 	cases := evaluationCases()
-	var all []result
-	for round := 1; round <= maxRounds; round++ {
-		for _, tc := range cases {
-			all = append(all, evaluateOne(client, cfg, modelID, prov, tc, round))
-		}
+	caseLimit := envInt("PROMPT_EVAL_CASE_LIMIT", len(cases))
+	if caseLimit > 0 && caseLimit < len(cases) {
+		cases = cases[:caseLimit]
 	}
-	printResults(all, modelID, prov.UpstreamModel, maxRounds)
+	for _, modelID := range evaluationModels(cfg) {
+		prov, ok := cfg.ResolveProvider(modelID)
+		if !ok || prov.UpstreamModel == "" {
+			fmt.Fprintf(os.Stderr, "skip model %s: provider is not configured\n", modelID)
+			continue
+		}
+		var all []result
+		for round := 1; round <= maxRounds; round++ {
+			for _, tc := range cases {
+				row := evaluateOne(client, cfg, modelID, prov, tc, round)
+				all = append(all, row)
+				printRow(row)
+			}
+		}
+		printResults(all, modelID, prov.UpstreamModel, maxRounds)
+	}
 }
 
 func evaluateOne(client *openai.Client, cfg *config.File, modelID string, prov config.ProviderResolved, tc evalCase, round int) result {
 	baseMessages := []openai.ChatMessage{
-		{Role: "system", Content: "Answer the user accurately and follow the user's requested output format."},
+		{Role: "system", Content: "You are a capable software engineering assistant."},
 		{Role: "user", Content: tc.Prompt},
 	}
 	positive := true
@@ -89,38 +99,100 @@ func evaluateOne(client *openai.Client, cfg *config.File, modelID string, prov c
 		Route: "chat", ModelID: modelID, Family: prov.FamilyUID, UserText: tc.Prompt,
 		QualityMode: "verified", QualityEnabled: &positive,
 	})
+	maxTokens := 1600
+	if prov.ThinkingBudgetTokens > 0 && maxTokens <= prov.ThinkingBudgetTokens {
+		maxTokens = prov.ThinkingBudgetTokens + 1024
+	}
 	opt := openai.ChatOptions{
 		Thinking: cfg.ResolveThinking(modelID), ThinkingParam: prov.ThinkingParam,
 		ThinkingType: prov.ThinkingType, ThinkingBudgetTokens: prov.ThinkingBudgetTokens,
 		Temperature: cfg.Upstream.Sampling.Temperature, TopP: cfg.Upstream.Sampling.TopP,
-		MaxTokens: 1200, BaseURL: prov.BaseURL, APIKey: prov.APIKey,
+		MaxTokens: maxTokens, BaseURL: prov.BaseURL, APIKey: prov.APIKey,
 		HTTPTimeout: 75 * time.Second,
 	}
 	out := result{Round: round, Case: tc.Name, Profiles: optimized.ProfileIDs}
-	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Second)
-	start := time.Now()
-	base, baseErr := client.Chat(ctx, prov.UpstreamModel, baseMessages, opt)
-	out.BaselineMS = time.Since(start).Milliseconds()
-	if baseErr != nil {
-		out.Error = "baseline: " + baseErr.Error()
+	// Alternate order by round to reduce warm-cache and service-load bias.
+	if round%2 == 1 {
+		out.Order = "baseline_first"
+		runVariant(client, prov, baseMessages, opt, tc, "baseline", &out)
+		runVariant(client, prov, optimized.Messages, opt, tc, "optimized", &out)
 	} else {
-		out.Baseline = score(tc, base.Content)
-		out.BaselineScore = scorePercent(out.Baseline)
+		out.Order = "optimized_first"
+		runVariant(client, prov, optimized.Messages, opt, tc, "optimized", &out)
+		runVariant(client, prov, baseMessages, opt, tc, "baseline", &out)
 	}
-	start = time.Now()
-	optResult, optErr := client.Chat(ctx, prov.UpstreamModel, optimized.Messages, opt)
-	out.OptimizedMS = time.Since(start).Milliseconds()
-	cancel()
-	if optErr != nil {
+	return out
+}
+
+func runVariant(client *openai.Client, prov config.ProviderResolved, messages []openai.ChatMessage, opt openai.ChatOptions, tc evalCase, variant string, out *result) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	start := time.Now()
+	answer, err := chatProvider(ctx, client, prov, messages, opt)
+	elapsed := time.Since(start).Milliseconds()
+	if err != nil {
 		if out.Error != "" {
 			out.Error += "; "
 		}
-		out.Error += "optimized: " + optErr.Error()
-	} else {
-		out.Optimized = score(tc, optResult.Content)
-		out.OptimizedScore = scorePercent(out.Optimized)
+		out.Error += variant + ": " + err.Error()
+		return
 	}
-	return out
+	dims := score(tc, answer)
+	if variant == "baseline" {
+		out.BaselineMS = elapsed
+		out.BaselineOK = true
+		out.Baseline = dims
+		out.BaselineScore = scorePercent(dims)
+		return
+	}
+	out.OptimizedMS = elapsed
+	out.OptimizedOK = true
+	out.Optimized = dims
+	out.OptimizedScore = scorePercent(dims)
+}
+
+func chatProvider(ctx context.Context, client *openai.Client, prov config.ProviderResolved, messages []openai.ChatMessage, opt openai.ChatOptions) (string, error) {
+	var (
+		result openai.ChatResult
+		err    error
+	)
+	switch config.NormalizeProvider(prov.Provider) {
+	case "anthropic":
+		result, err = anthropic.New().Chat(ctx, prov.BaseURL, prov.APIKey, prov.UpstreamModel, messages, opt)
+	case "responses":
+		result, err = client.ChatResponses(ctx, prov.UpstreamModel, messages, opt)
+	default:
+		result, err = client.Chat(ctx, prov.UpstreamModel, messages, opt)
+	}
+	return result.Content, err
+}
+
+func evaluationModels(cfg *config.File) []string {
+	raw := strings.TrimSpace(os.Getenv("PROMPT_EVAL_MODELS"))
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("PROMPT_EVAL_MODEL"))
+	}
+	if raw == "" {
+		return []string{cfg.DefaultModelID()}
+	}
+	var models []string
+	seen := map[string]bool{}
+	for _, id := range strings.Split(raw, ",") {
+		id = strings.TrimSpace(id)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			models = append(models, id)
+		}
+	}
+	return models
+}
+
+func envInt(name string, fallback int) int {
+	v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name)))
+	if err != nil {
+		return fallback
+	}
+	return v
 }
 
 func score(tc evalCase, answer string) dimensions {
@@ -233,26 +305,41 @@ func evaluationCases() []evalCase {
 
 func printResults(results []result, model, upstream string, rounds int) {
 	var base, opt float64
+	paired := 0
+	baselineFailures := 0
+	optimizedFailures := 0
 	for _, row := range results {
-		b, _ := json.Marshal(row)
-		fmt.Println(string(b))
-		base += row.BaselineScore
-		opt += row.OptimizedScore
+		if !row.BaselineOK {
+			baselineFailures++
+		}
+		if !row.OptimizedOK {
+			optimizedFailures++
+		}
+		if row.BaselineOK && row.OptimizedOK {
+			paired++
+			base += row.BaselineScore
+			opt += row.OptimizedScore
+		}
 	}
-	if len(results) > 0 {
-		base /= float64(len(results))
-		opt /= float64(len(results))
+	if paired > 0 {
+		base /= float64(paired)
+		opt /= float64(paired)
 	}
 	change := 0.0
 	if base > 0 {
 		change = (opt - base) / base * 100
 	}
-	fmt.Printf("SUMMARY model=%s upstream=%s rounds=%d cases=%d baseline_score=%.2f optimized_score=%.2f relative_change=%.2f%%\n", model, upstream, rounds, len(results), base, opt, change)
-	if change < 40 {
-		fmt.Println("RESULT target_not_proven=true")
-	} else {
+	fmt.Printf("SUMMARY model=%s upstream=%s rounds=%d samples=%d paired=%d baseline_failures=%d optimized_failures=%d baseline_score=%.2f optimized_score=%.2f relative_change=%.2f%%\n", model, upstream, rounds, len(results), paired, baselineFailures, optimizedFailures, base, opt, change)
+	if paired >= 20 && baselineFailures == 0 && optimizedFailures == 0 && change >= 40 {
 		fmt.Println("RESULT target_reached=true")
+	} else {
+		fmt.Println("RESULT target_not_proven=true")
 	}
+}
+
+func printRow(row result) {
+	b, _ := json.Marshal(row)
+	fmt.Println(string(b))
 }
 
 func fatal(message string) {
