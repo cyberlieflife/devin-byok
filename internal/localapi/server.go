@@ -26,15 +26,16 @@ import (
 
 // Server 本地 Codeium API 兼容层。
 type Server struct {
-	mu         sync.RWMutex
-	cfg        *config.File
-	cfgPath    string
-	upstream   *openai.Client
-	rpcMu      sync.Mutex
-	rpcLog     string
-	bodyDir    string
-	stopWatch  chan struct{}
-	rpcRotator *logx.RotatingWriter
+	mu              sync.RWMutex
+	cfg             *config.File
+	cfgPath         string
+	upstream        *openai.Client
+	rpcMu           sync.Mutex
+	rpcLog          string
+	bodyDir         string
+	stopWatch       chan struct{}
+	rpcRotator      *logx.RotatingWriter
+	restartRequired atomic.Bool
 }
 
 const officialAPIBase = "https://server.codeium.com"
@@ -675,6 +676,20 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		}()
 		return
 	}
+	if !isTitleReq && !fastCtx && isModelIdentityQuestion(userText) {
+		answer := modelIdentityAnswer(modelDisplayName(cfg, uiModel), userText)
+		w.Header().Set("Content-Type", "application/connect+proto")
+		w.Header().Set("Connect-Protocol-Version", "1")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(pbwire.ConnectFrame(0, buildGetChatMessageDelta(msgID, answer, "", false)))
+		_, _ = w.Write(pbwire.ConnectEndStream())
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		metricsReqOK(uiModel, estimateTokens(userText), estimateTokens(answer), 0)
+		metricsAddLog("info", "model identity answered locally model="+uiModel)
+		return
+	}
 	// …/family … sampling
 	maxTok := cfg.Upstream.Sampling.MaxTokens
 	if me, ok := cfg.FindModel(uiModel); ok && me.MaxTokens > 0 {
@@ -732,7 +747,7 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		route = "fast_context"
 	}
 	composed := promptstore.ComposeMessages(msgs, promptstore.ComposeContext{
-		Route: route, ModelID: uiModel, Family: prov.FamilyUID,
+		Route: route, ModelID: uiModel, ModelName: modelDisplayName(cfg, uiModel), Family: prov.FamilyUID,
 		UserText: userText, HasTools: len(chatOpt.Tools) > 0,
 		HasWorkspace: len(workspaceRoots) > 0, QualityMode: cfg.QualityMode(), QualityEnabled: boolPtr(cfg.Quality.Enabled),
 	})

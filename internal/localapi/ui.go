@@ -47,6 +47,9 @@ func (s *Server) registerUIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/status", s.handleAPIStatus)
 	mux.HandleFunc("/api/config", s.handleAPIConfig)
 	mux.HandleFunc("/api/local-account", s.handleAPILocalAccount)
+	mux.HandleFunc("/api/devin", s.handleAPIDevin)
+	mux.HandleFunc("/api/devin/restart", s.handleAPIDevinRestart)
+	mux.HandleFunc("/api/chats/export", s.handleAPIChatExport)
 	mux.HandleFunc("/api/test-upstream", s.handleAPITestUpstream)
 	mux.HandleFunc("/api/control/", s.handleAPIControl)
 	mux.HandleFunc("/api/desktop", s.handleAPIDesktop)
@@ -85,7 +88,7 @@ func (s *Server) handleAPIPromptPreview(w http.ResponseWriter, r *http.Request) 
 	}
 	base := []openai.ChatMessage{{Role: "system", Content: "Upstream system prompt preview"}, {Role: "user", Content: "preview"}}
 	composed := promptstore.ComposeMessages(base, promptstore.ComposeContext{
-		Route: route, ModelID: model, Family: prov.FamilyUID, Task: task,
+		Route: route, ModelID: model, ModelName: modelDisplayName(cfg, model), Family: prov.FamilyUID, Task: task,
 		QualityMode: quality, HasTools: route == "chat", HasWorkspace: false, QualityEnabled: boolPtr(cfg.Quality.Enabled),
 	})
 	type messagePreview struct {
@@ -131,23 +134,42 @@ func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 	if _, err := os.Stat(real); err == nil {
 		wrapper = true
 	}
+	accountExists := false
+	accountConfigured := false
+	serviceActive := false
+	if account, err := devin.LoadLocalAccount(); err == nil {
+		accountExists = true
+		accountConfigured = cfg.Features.PureLocal && cfg.Auth.FakeUserID == account.ID && cfg.Auth.FakeAPIKey == account.APIKey
+		wrapperPath := filepath.Join(platform.DataDir(), "bin", platform.WrapperExeName())
+		imported, _ := devin.LocalAccountImported(cfg, wrapperPath)
+		serviceActive = accountConfigured && imported
+	}
+	process := devin.ProcessStatus(cfg.Devin.InstallDir)
 	writeJSON(w, map[string]any{
-		"ok":            true,
-		"time":          time.Now().Format(time.RFC3339),
-		"portal":        cfg.Server.PublicBase,
-		"api":           cfg.Server.PublicBase + cfg.APIBasePath(),
-		"default_model": cfg.DefaultModelID(),
-		"models":        cfg.ModelList(),
-		"pure_local":    cfg.Features.PureLocal,
-		"stream":        cfg.Features.EnableStream,
-		"cascade_tools": cfg.Features.EnableCascadeTools,
-		"tools_mode":    cfg.ToolsMode(),
-		"tools_timeout": cfg.ResolveChatTimeoutSec(true),
-		"wrapper":       wrapper,
-		"upstream":      config.NormalizeChatCompletionsURL(cfg.Upstream.BaseURL),
-		"config_path":   s.getConfigPath(),
-		"cache_enabled": cfg.Cache.Enabled,
-		"cache_ttl_sec": cfg.Cache.TTLSec,
+		"ok":                 true,
+		"management_online":  true,
+		"service_active":     serviceActive,
+		"applied":            serviceActive,
+		"account_exists":     accountExists,
+		"account_imported":   accountConfigured && serviceActive,
+		"devin_running":      process.Running,
+		"restart_required":   s.restartRequired.Load(),
+		"time":               time.Now().Format(time.RFC3339),
+		"portal":             cfg.Server.PublicBase,
+		"api":                cfg.Server.PublicBase + cfg.APIBasePath(),
+		"default_model":      cfg.DefaultModelID(),
+		"default_model_name": modelDisplayName(cfg, cfg.DefaultModelID()),
+		"models":             cfg.ModelList(),
+		"pure_local":         cfg.Features.PureLocal,
+		"stream":             cfg.Features.EnableStream,
+		"cascade_tools":      cfg.Features.EnableCascadeTools,
+		"tools_mode":         cfg.ToolsMode(),
+		"tools_timeout":      cfg.ResolveChatTimeoutSec(true),
+		"wrapper":            wrapper,
+		"upstream":           config.NormalizeChatCompletionsURL(cfg.Upstream.BaseURL),
+		"config_path":        s.getConfigPath(),
+		"cache_enabled":      cfg.Cache.Enabled,
+		"cache_ttl_sec":      cfg.Cache.TTLSec,
 	})
 }
 
@@ -306,14 +328,11 @@ func localAccountResponse(cfg *config.File, account *devin.LocalAccount, created
 }
 
 func applyLocalRuntime(cfg *config.File) error {
-	if _, err := devin.ApplyPortal(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys); err != nil {
-		return err
-	}
 	wrapperPath, err := lsinstall.MaterializeWrapper()
 	if err != nil {
 		return err
 	}
-	if err := devin.ApplyDevKeys(wrapperPath); err != nil {
+	if _, err := devin.ApplyLocalRuntime(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys, wrapperPath); err != nil {
 		return err
 	}
 	if _, err := extinstall.InstallFromFS(extinstall.ExtFS, extinstall.ExtRoot); err != nil {
@@ -357,12 +376,51 @@ func (s *Server) handleAPILocalAccount(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"ok": false, "message": "已导入，但配置重载失败: " + err.Error()})
 			return
 		}
+		s.restartRequired.Store(true)
 		response := localAccountResponse(cfg, account, created)
 		response["message"] = "本地虚拟账户已导入，请完全退出并重启 Devin"
 		writeJSON(w, response)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleAPIDevin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, devin.ProcessStatus(s.GetConfig().Devin.InstallDir))
+}
+
+func (s *Server) handleAPIDevinRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	result, err := devin.Restart(s.GetConfig().Devin.InstallDir)
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+		return
+	}
+	s.restartRequired.Store(false)
+	writeJSON(w, map[string]any{"ok": true, "running": result.Running, "message": result.Message})
+}
+
+func (s *Server) handleAPIChatExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	result, err := devin.ExportChats("")
+	if err != nil {
+		writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{
+		"ok": true, "message": result.Message, "path": result.Path,
+		"file_count": result.FileCount, "size": result.Size,
+	})
 }
 
 func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
@@ -374,12 +432,26 @@ func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
 	cfg := s.GetConfig()
 	switch action {
 	case "start":
-		// 单 GUI / 内嵌模式：服务已在本进程，写入完整本地路由并启用扩展。
+		account, _, err := devin.EnsureLocalAccount()
+		if err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": "创建本地账户失败: " + err.Error()})
+			return
+		}
+		cfg, err = devin.ApplyLocalAccountToConfig(s.getConfigPath(), account)
+		if err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": "保存本地账户失败: " + err.Error()})
+			return
+		}
 		if err := applyLocalRuntime(cfg); err != nil {
 			writeJSON(w, map[string]any{"ok": false, "message": "apply 失败: " + err.Error()})
 			return
 		}
-		writeJSON(w, map[string]any{"ok": true, "message": "服务已运行，本地账户路由与提示词扩展已启用"})
+		if err := s.ReloadConfig(); err != nil {
+			writeJSON(w, map[string]any{"ok": false, "message": "已启用，但配置重载失败: " + err.Error()})
+			return
+		}
+		s.restartRequired.Store(true)
+		writeJSON(w, map[string]any{"ok": true, "message": "本地服务和虚拟账户已启用，请重启 Devin 生效"})
 	case "install-wrapper", "install_wrapper":
 		meta, err := lsinstall.Install(cfg.Devin.InstallDir)
 		if err != nil {
@@ -403,23 +475,15 @@ func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
 			logx.Infof("extension disabled")
 		}
 		_ = ideinject.RestoreContextUsageDonut()
-		if _, err := devin.RestorePortal(); err != nil {
+		if _, err := devin.RestorePortal(); err != nil && !os.IsNotExist(err) {
 			logx.Warnf("control stop restore: %v", err)
 		} else {
 			logx.Infof("control stop restore ok")
 		}
-		writeJSON(w, map[string]any{"ok": true, "message": "已保存计数、restore、禁用扩展并停止（日志已清空）"})
+		s.restartRequired.Store(false)
+		writeJSON(w, map[string]any{"ok": true, "message": "BYOK 已停止，Devin 原配置已恢复；管理窗口仍可使用"})
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
-		}
-		// 仅独立 CLI serve 进程在 stop 时退出；GUI 内嵌由 nativeStop 关监听
-		exe, _ := os.Executable()
-		base := strings.ToLower(filepath.Base(exe))
-		if base == strings.ToLower(platform.CLIName()) {
-			go func() {
-				time.Sleep(150 * time.Millisecond)
-				os.Exit(0)
-			}()
 		}
 		return
 	default:

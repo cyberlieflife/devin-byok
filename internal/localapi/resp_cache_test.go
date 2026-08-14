@@ -39,3 +39,22 @@ func TestDifferentQualityModesDoNotShareCacheKey(t *testing.T) {
 		t.Fatal("different quality modes share response cache key")
 	}
 }
+
+func TestDifferentProfilesDoNotShareCache(t *testing.T) {
+	msgs := []openai.ChatMessage{{Role: "system", Content: "upstream"}, {Role: "user", Content: "report"}}
+	coding := promptstore.ComposeMessages(msgs, promptstore.ComposeContext{
+		Route: "chat", UserText: "请实现一个 HTTP handler", QualityMode: "balanced",
+	})
+	debug := promptstore.ComposeMessages(msgs, promptstore.ComposeContext{
+		Route: "chat", UserText: "程序崩溃并报错", QualityMode: "balanced",
+	})
+	if coding.Task == debug.Task {
+		t.Fatalf("expected different detected tasks, got %q for both", coding.Task)
+	}
+	if coding.Hash == debug.Hash {
+		t.Fatal("different task profiles produced the same effective prompt hash")
+	}
+	if respCacheKey("model", "high", coding.Hash, coding.Messages, nil) == respCacheKey("model", "high", debug.Hash, debug.Messages, nil) {
+		t.Fatal("different effective profiles share response cache key")
+	}
+}
