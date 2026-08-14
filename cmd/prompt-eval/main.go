@@ -27,6 +27,8 @@ type evalCase struct {
 	RequiresSource bool
 	Strict         bool
 	Check          func(string) bool
+	Code           *codeTask
+	MaxTokens      int
 }
 
 type dimensions struct {
@@ -90,16 +92,23 @@ func main() {
 }
 
 func evaluateOne(client *openai.Client, cfg *config.File, modelID string, prov config.ProviderResolved, tc evalCase, round int) result {
+	prompt := tc.Prompt
+	if tc.Code != nil {
+		prompt = codePrompt(tc.Code.Function, tc.Code.Contract)
+	}
 	baseMessages := []openai.ChatMessage{
 		{Role: "system", Content: "You are a capable software engineering assistant."},
-		{Role: "user", Content: tc.Prompt},
+		{Role: "user", Content: prompt},
 	}
 	positive := true
 	optimized := promptstore.ComposeMessages(baseMessages, promptstore.ComposeContext{
-		Route: "chat", ModelID: modelID, Family: prov.FamilyUID, UserText: tc.Prompt,
+		Route: "chat", ModelID: modelID, Family: prov.FamilyUID, UserText: prompt,
 		QualityMode: "verified", QualityEnabled: &positive,
 	})
 	maxTokens := 1600
+	if tc.MaxTokens > maxTokens {
+		maxTokens = tc.MaxTokens
+	}
 	if prov.ThinkingBudgetTokens > 0 && maxTokens <= prov.ThinkingBudgetTokens {
 		maxTokens = prov.ThinkingBudgetTokens + 1024
 	}
@@ -125,7 +134,7 @@ func evaluateOne(client *openai.Client, cfg *config.File, modelID string, prov c
 }
 
 func runVariant(client *openai.Client, prov config.ProviderResolved, messages []openai.ChatMessage, opt openai.ChatOptions, tc evalCase, variant string, out *result) {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
 	start := time.Now()
 	answer, err := chatProvider(ctx, client, prov, messages, opt)
@@ -196,6 +205,9 @@ func envInt(name string, fallback int) int {
 }
 
 func score(tc evalCase, answer string) dimensions {
+	if tc.Code != nil {
+		return scoreCode(*tc.Code, answer)
+	}
 	lower := strings.ToLower(strings.TrimSpace(answer))
 	matched := 0
 	for _, want := range tc.Required {
@@ -257,50 +269,6 @@ func strictOutput(tc evalCase, answer string) bool {
 
 func scorePercent(d dimensions) float64 {
 	return (float64(d.Correctness)*40 + float64(d.Completeness)*20 + float64(d.Evidence)*20 + float64(d.Understanding)*15 + float64(d.Hallucination)*5) / 4
-}
-
-func evaluationCases() []evalCase {
-	return []evalCase{
-		{Name: "arithmetic", Prompt: "Return only the integer answer to 17*19.", Required: []string{"323"}, Strict: true, Check: func(s string) bool {
-			return onlyInteger.MatchString(strings.TrimSpace(s)) && strings.TrimSpace(s) == "323"
-		}},
-		{Name: "sorted-unique-json", Prompt: "Return only a JSON array containing the unique values of [3,1,3,2] sorted ascending.", Required: []string{"[1,2,3]"}, Strict: true, Check: func(s string) bool { return strings.TrimSpace(s) == "[1,2,3]" }},
-		{Name: "adjacent-intervals", Prompt: "Assume intervals merge only when they overlap. Should [1,2] and [2,3] merge? Return only YES or NO.", Required: []string{"NO"}, Strict: true, Check: func(s string) bool {
-			return onlyYesNo.MatchString(strings.ToUpper(strings.TrimSpace(s))) && strings.HasPrefix(strings.ToUpper(strings.TrimSpace(s)), "NO")
-		}},
-		{Name: "nil-slice", Prompt: "In Go, what happens when reading s[0] from var s []int? Return the panic reason in one short sentence.", Required: []string{"panic", "slice", "index"}, Check: func(s string) bool {
-			l := strings.ToLower(s)
-			return strings.Contains(l, "panic") && strings.Contains(l, "slice") && strings.Contains(l, "index")
-		}},
-		{Name: "sql-vulnerability", Prompt: "A program builds SQL by concatenating an email string into the query. Name the vulnerability in two words.", Required: []string{"sql", "injection"}, Strict: true, Check: func(s string) bool {
-			l := strings.ToLower(s)
-			return strings.Contains(l, "sql") && strings.Contains(l, "injection")
-		}},
-		{Name: "inclusive-sum", Prompt: "Return only the integer sum of all integers in the inclusive interval [4,7].", Required: []string{"22"}, Strict: true, Check: func(s string) bool { return strings.TrimSpace(s) == "22" }},
-		{Name: "boolean-logic", Prompt: "Return only TRUE or FALSE: if A is true and B is false, is (A AND B) OR NOT B true?", Required: []string{"TRUE"}, Strict: true, Check: func(s string) bool { return strings.TrimSpace(strings.ToUpper(s)) == "TRUE" }},
-		{Name: "empty-max-error", Prompt: "Return only YES or NO: the maximum of an empty list is undefined, so if an API must return an error instead of a value, should it return an error?", Required: []string{"YES"}, Strict: true, Check: func(s string) bool {
-			return onlyYesNo.MatchString(strings.ToUpper(strings.TrimSpace(s))) && strings.HasPrefix(strings.ToUpper(strings.TrimSpace(s)), "YES")
-		}},
-		{Name: "multi-constraint", Prompt: "Return exactly three comma-separated items, in order: for input [1,1,2], state whether duplicates exist, whether it is sorted ascending, and its unique length. Use only YES/NO/number.", Required: []string{"YES", "YES", "2"}, Strict: true, Check: func(s string) bool {
-			l := strings.ReplaceAll(strings.TrimSpace(strings.ToUpper(s)), " ", "")
-			return l == "YES,YES,2"
-		}},
-		{Name: "debug-index", Prompt: "Given Go code `for i := 0; i <= len(xs); i++ { _ = xs[i] }`, name the bug and the minimal loop-bound fix. Include both the comparison and the corrected operator.", Required: []string{"<=", "<", "index"}, Check: func(s string) bool {
-			l := strings.ToLower(s)
-			return strings.Contains(l, "<=") && strings.Contains(l, "<") && strings.Contains(l, "index")
-		}},
-		{Name: "review-risk", Prompt: "Review this line: `exec.Command(\"sh\", \"-c\", \"grep \"+userInput)` . Return the vulnerability and one safe fix, separated by a semicolon.", Required: []string{"injection", "argument"}, Check: func(s string) bool {
-			l := strings.ToLower(s)
-			return strings.Contains(l, "injection") && (strings.Contains(l, "argument") || strings.Contains(l, "args") || strings.Contains(l, "不拼接"))
-		}},
-		{Name: "provided-evidence", Prompt: "Use only the supplied facts: Source A says timeout=30s; Source B says timeout=60s. Return JSON with keys `a`, `b`, and `conflict`, where conflict is true. No explanation.", Required: []string{"\"a\"", "\"b\"", "\"conflict\"", "true"}, RequiresSource: true, Strict: true, Check: func(s string) bool {
-			var v map[string]any
-			if json.Unmarshal([]byte(strings.TrimSpace(s)), &v) != nil {
-				return false
-			}
-			return v["a"] == "30s" && v["b"] == "60s" && v["conflict"] == true
-		}},
-	}
 }
 
 func printResults(results []result, model, upstream string, rounds int) {

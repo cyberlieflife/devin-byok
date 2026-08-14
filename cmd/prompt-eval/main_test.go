@@ -14,13 +14,27 @@ func TestEvaluationHasAtLeastTenDeterministicCases(t *testing.T) {
 	}
 	seen := map[string]bool{}
 	for _, tc := range cases {
-		if tc.Name == "" || tc.Prompt == "" || tc.Check == nil {
+		if tc.Name == "" {
 			t.Fatalf("invalid case: %+v", tc)
+		}
+		if tc.Code == nil && tc.Check == nil {
+			t.Fatalf("case %s has neither Code nor Check", tc.Name)
+		}
+		if tc.Code != nil && tc.Prompt != "" {
+			t.Fatalf("case %s must not set Prompt for code tasks", tc.Name)
 		}
 		if seen[tc.Name] {
 			t.Fatalf("duplicate case name: %s", tc.Name)
 		}
 		seen[tc.Name] = true
+	}
+}
+
+func TestEvaluationCodeTasksUseMaxTokens(t *testing.T) {
+	for _, tc := range evaluationCases() {
+		if tc.Code != nil && tc.MaxTokens < 2000 {
+			t.Fatalf("code case %s needs MaxTokens >= 2000, got %d", tc.Name, tc.MaxTokens)
+		}
 	}
 }
 
