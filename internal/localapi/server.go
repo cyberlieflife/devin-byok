@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -850,6 +851,8 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	var warn string
 	var result chatResult
 	const maxWorkspacePathRetries = 5
+	const maxStreamInterruptedRetries = 2
+	streamRetries := 0
 
 	for retry := 0; retry <= maxWorkspacePathRetries; retry++ {
 		done := make(chan chatResult, 1)
@@ -952,6 +955,16 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 		cancel()
 
 		if result.err != nil {
+			if errors.Is(result.err, openai.ErrStreamInterrupted) && streamRetries < maxStreamInterruptedRetries {
+				streamRetries++
+				// 把第一遍已收到的文本回填为 assistant 消息，让重试
+				// 从中断处继续，避免向 Devin 重复输出。
+				if strings.TrimSpace(result.text) != "" {
+					msgs = append(msgs, openai.ChatMessage{Role: "assistant", Content: result.text})
+				}
+				metricsAddLog("warn", fmt.Sprintf("upstream stream interrupted, resuming (%d/%d) partial=%d chars", streamRetries, maxStreamInterruptedRetries, len(result.text)))
+				continue
+			}
 			logx.Errorf("upstream chat: %v", result.err)
 			metricsReqFail(uiModel)
 			if isCommitGenerationPending() {

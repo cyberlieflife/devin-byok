@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -15,6 +16,11 @@ import (
 
 	"devin-byok/internal/config"
 )
+
+// ErrStreamInterrupted 表示流式响应在没有 [DONE]（OpenAI 兼容）或
+// message_stop（Anthropic）与 finish_reason 的情况下提前结束，通常是
+// 中转/代理断开。调用方应视为可重试错误。
+var ErrStreamInterrupted = errors.New("upstream stream interrupted")
 
 // Client 调用 OpenAI 兼容聊天接口。
 type Client struct {
@@ -656,6 +662,8 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []ChatMe
 	sc.Buffer(buf, 1024*1024)
 	var finalUsage Usage
 	gotAny := false
+	gotDone := false
+	finishReason := ""
 	for sc.Scan() {
 		line := sc.Text()
 		if !strings.HasPrefix(line, "data:") {
@@ -663,11 +671,13 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []ChatMe
 		}
 		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if payload == "[DONE]" {
+			gotDone = true
 			break
 		}
 		var chunk struct {
 			Choices []struct {
-				Delta struct {
+				FinishReason string `json:"finish_reason"`
+				Delta        struct {
 					Content          string     `json:"content"`
 					ReasoningContent string     `json:"reasoning_content"`
 					Reasoning        string     `json:"reasoning"`
@@ -692,6 +702,9 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []ChatMe
 		if len(chunk.Choices) == 0 {
 			continue
 		}
+		if chunk.Choices[0].FinishReason != "" {
+			finishReason = chunk.Choices[0].FinishReason
+		}
 		d := chunk.Choices[0].Delta
 		thinking := firstNonEmpty(d.ReasoningContent, d.Reasoning, d.Thinking)
 		if d.Content == "" && thinking == "" && len(d.ToolCalls) == 0 {
@@ -708,6 +721,11 @@ func (c *Client) StreamChat(ctx context.Context, model string, messages []ChatMe
 	if !gotAny && finalUsage.PromptTokens == 0 && finalUsage.CompletionTokens == 0 {
 		// SSE 扫完却无任何 delta：常见于代理返回畸形流
 		return Usage{}, fmt.Errorf("upstream SSE empty stream (no content deltas)")
+	}
+	if !gotDone && finishReason == "" {
+		// 流提前断开：没有 [DONE] 也没有 finish_reason，说明代理/中转
+		// 把连接掐了，而不是模型正常停。返回可重试错误。
+		return finalUsage, ErrStreamInterrupted
 	}
 	return finalUsage, nil
 }

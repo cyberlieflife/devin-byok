@@ -144,6 +144,8 @@ func (c *Client) StreamChat(ctx context.Context, baseURL, apiKey, model string, 
 		return openai.Usage{}, openai.HumanizeHTTPError(resp.StatusCode, string(b))
 	}
 	var usage openai.Usage
+	sawStop := false
+	sawContent := false
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 	for sc.Scan() {
@@ -175,7 +177,12 @@ func (c *Client) StreamChat(ctx context.Context, baseURL, apiKey, model string, 
 		if json.Unmarshal([]byte(payload), &ev) != nil {
 			continue
 		}
+		if ev.Type == "message_stop" {
+			sawStop = true
+			continue
+		}
 		if ev.Type == "content_block_delta" && ev.Delta.Text != "" {
+			sawContent = true
 			if err := onDelta(openai.StreamDelta{Content: ev.Delta.Text}); err != nil {
 				return usage, err
 			}
@@ -189,7 +196,14 @@ func (c *Client) StreamChat(ctx context.Context, baseURL, apiKey, model string, 
 			usage.CompletionTokens = ev.Message.Usage.OutputTokens
 		}
 	}
-	return usage, sc.Err()
+	if err := sc.Err(); err != nil {
+		return usage, err
+	}
+	if sawContent && !sawStop {
+		// Anthropic 协议以 message_stop 结束；流中断说明中转把连接掐了。
+		return usage, openai.ErrStreamInterrupted
+	}
+	return usage, nil
 }
 
 func (c *Client) build(model string, messages []openai.ChatMessage, stream bool, opt openai.ChatOptions) ([]byte, error) {
