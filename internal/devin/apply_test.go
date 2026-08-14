@@ -19,6 +19,9 @@ func TestApplyDevKeysToSettingsEnablesCascade(t *testing.T) {
 	if got, ok := settings["devin.cascade.enabled"].(bool); !ok || !got {
 		t.Fatalf("cascade.enabled = %#v, want true", settings["devin.cascade.enabled"])
 	}
+	if got, ok := settings["security.workspace.trust.enabled"].(bool); ok && got {
+		t.Fatalf("workspace trust must be disabled for ACP agents in untrusted workspaces")
+	}
 	if got := settings["custom.setting"]; got != "keep" {
 		t.Fatalf("custom.setting = %#v, want keep", got)
 	}

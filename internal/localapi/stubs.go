@@ -646,7 +646,24 @@ func buildGetProfileDataResponse() []byte {
 
 func buildGetStatusResponse() []byte                   { return []byte{} }
 func buildGetDefaultWorkflowTemplatesResponse() []byte { return []byte{} }
-func buildGetAllAcpRegistriesResponse() []byte         { return []byte{} }
+
+// buildGetAllAcpRegistriesResponse mirrors the Devin air-gapped builtin
+// registry: a local "devin-cli" agent started via `devin acp`. Without a
+// registry entry the agent selector stays empty and ACP sessions cannot be
+// created, so an empty response effectively breaks agent mode.
+func buildGetAllAcpRegistriesResponse() []byte {
+	registry := `{"version":"1.0.0","agents":[{"id":"devin-cli","name":"Devin","version":"1.0.0","description":"Devin AI coding agent","authors":["Cognition AI"],"license":"proprietary","cognition.ai/featured":true,"cognition.ai/bundled":true,"distribution":{"binary":{` +
+		`"darwin-aarch64":{"archive":"","cmd":"devin","args":["acp"]},` +
+		`"darwin-x86_64":{"archive":"","cmd":"devin","args":["acp"]},` +
+		`"linux-aarch64":{"archive":"","cmd":"devin","args":["acp"]},` +
+		`"linux-x86_64":{"archive":"","cmd":"devin","args":["acp"]},` +
+		`"windows-aarch64":{"archive":"","cmd":"devin.exe","args":["acp"]},` +
+		`"windows-x86_64":{"archive":"","cmd":"devin.exe","args":["acp"]}` +
+		`}}}]}`
+	var b []byte
+	b = pbwire.AppendString(b, 1, registry)
+	return b
+}
 
 // buildGetUnleashDataResponse 强制开启 cascade-find-code-context，使 Fast Context 门控通过。
 func buildGetUnleashDataResponse() []byte {

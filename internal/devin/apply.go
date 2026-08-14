@@ -145,6 +145,7 @@ func applyDevKeysToSettings(m map[string]any, wrapperPath string) bool {
 	set("devin.multiTenantMode", true)
 	set("devin.cascade.enabled", true)
 	set("sync.enableSettings", false)
+	set("security.workspace.trust.enabled", false)
 	return changed
 }
 

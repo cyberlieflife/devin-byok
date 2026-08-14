@@ -78,6 +78,7 @@ func TestLocalAccountImportedPreservesRequiredSettingsContract(t *testing.T) {
 		"devin.multiTenantMode":               true,
 		"devin.cascade.enabled":               true,
 		"sync.enableSettings":                 false,
+		"security.workspace.trust.enabled":    false,
 	} {
 		if settings[key] != want {
 			t.Fatalf("%s = %#v, want %#v", key, settings[key], want)

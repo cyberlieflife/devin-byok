@@ -146,6 +146,7 @@ func LocalAccountImported(cfg *config.File, wrapperPath string) (bool, string) {
 		"devin.multiTenantMode":               true,
 		"devin.cascade.enabled":               true,
 		"sync.enableSettings":                 false,
+		"security.workspace.trust.enabled":    false,
 		"codeiumDev.languageServerBinaryPath": wrapperPath,
 	}
 	for key, value := range expected {
