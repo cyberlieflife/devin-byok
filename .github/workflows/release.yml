@@ -36,9 +36,8 @@ jobs:
     name: package macOS (${{ matrix.arch }})
     strategy:
       fail-fast: false
-      # macos-13 已退役（无 runner）。macos-14/15 均为 arm64 机器，
-      # amd64 产物通过 GOARCH=amd64 + CGO_ENABLED=1 交叉编译生成
-      # （Apple Silicon 的 Xcode clang 支持生成 x86_64 代码）。
+      # macos-13 已退役（无 runner）。macos-14 为 arm64 机器，
+      # amd64 产物通过 GOARCH=amd64 + CGO_ENABLED=1 交叉编译生成。
       matrix:
         include:
           - arch: arm64
@@ -71,6 +70,12 @@ jobs:
     needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
     steps:
+      # checkout 提供 git 上下文：gh release create --generate-notes 需要
+      # 仓库历史生成变更说明，没有 .git 会直接失败。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: dist-artifacts
@@ -87,4 +92,5 @@ jobs:
             ASSETS+=("$f")
           done
           echo "Releasing ${TAG} with ${#ASSETS[@]} assets"
-          gh release create "${TAG}" "${ASSETS[@]}" --title "${TAG}" --generate-notes || true
+          # 不用 || true：发布失败必须让 job 标红，否则用户无感知
+          gh release create "${TAG}" "${ASSETS[@]}" --title "${TAG}" --generate-notes
