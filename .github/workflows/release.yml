@@ -11,7 +11,11 @@ permissions:
 
 jobs:
   build-windows:
-    name: package windows amd64
+    name: package windows ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,13 +27,15 @@ jobs:
 
       - name: Package
         shell: pwsh
+        env:
+          GOARCH: ${{ matrix.arch }}
         run: ./scripts/pack-release.ps1 -Version $($env:GITHUB_REF_NAME -replace '^v','')
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-release
-          path: dist/devin-byok-*-windows-amd64.exe*
+          name: windows-${{ matrix.arch }}-release
+          path: dist/devin-byok-*-windows-${{ matrix.arch }}.exe*
           if-no-files-found: error
 
   build-macos:

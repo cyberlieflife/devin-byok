@@ -5,6 +5,7 @@ package platform
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -65,7 +66,14 @@ func devinInstallCandidates() []string {
 }
 
 func languageServerName() string {
-	return "language_server_windows_x64.exe"
+	// 这是 Devin 客户端自带的 language server 文件名，随 Devin 安装架构而定：
+	// arm64 Windows 上为原生 arm64 版，其余架构（含 x64）为 x64 版。
+	switch runtime.GOARCH {
+	case "arm64":
+		return "language_server_windows_arm64.exe"
+	default:
+		return "language_server_windows_x64.exe"
+	}
 }
 
 func wrapperExeName() string {
@@ -91,7 +99,14 @@ func bundledCLIPath(exe string) string {
 }
 
 func assetSuffix() string {
-	return "windows-amd64.exe"
+	// 命名必须与 scripts/pack-release.ps1 的产物一致（devin-byok-<ver>-windows-<GOARCH>.exe），
+	// 否则在线更新器匹配不到对应架构的安装包。
+	switch runtime.GOARCH {
+	case "arm64":
+		return "windows-arm64.exe"
+	default:
+		return "windows-amd64.exe"
+	}
 }
 
 func killCommand(pid string) []string {

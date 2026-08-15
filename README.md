@@ -13,10 +13,11 @@
 
 ### Windows
 
-最终发布物是一个 `.exe` 文件：
+最终发布物是一个 `.exe` 文件（按 CPU 架构区分）：
 
 ```
-devin-byok-<ver>-windows-amd64.exe
+devin-byok-<ver>-windows-amd64.exe   # x64（Intel / AMD）
+devin-byok-<ver>-windows-arm64.exe   # arm64（Windows on ARM 原生）
 ```
 
 1. 双击 `.exe`
@@ -94,6 +95,13 @@ go build -o devin-byok.exe ./cmd/devin-byok
 go build -ldflags "-H windowsgui" -o devin-byok-gui.exe ./cmd/devin-byok-gui
 ```
 
+交叉编译 arm64（Windows on ARM，从 x64 机器）：
+```powershell
+$env:GOOS = "windows"; $env:GOARCH = "arm64"; $env:CGO_ENABLED = "0"
+go build -o devin-byok-arm64.exe ./cmd/devin-byok
+go build -ldflags "-H windowsgui" -o devin-byok-gui-arm64.exe ./cmd/devin-byok-gui
+```
+
 ### macOS
 ```bash
 git clone https://github.com/cyberlieflife/devin-byok.git
@@ -108,8 +116,10 @@ go build -o devin-byok-gui ./cmd/devin-byok-gui
 
 Windows:
 ```powershell
-.\scripts\pack-release.ps1
+.\scripts\pack-release.ps1                # x64（amd64）
+.\scripts\pack-release.ps1 -Arch arm64     # arm64（交叉编译）
 # dist/devin-byok-<ver>-windows-amd64.exe
+# dist/devin-byok-<ver>-windows-arm64.exe
 ```
 
 macOS:

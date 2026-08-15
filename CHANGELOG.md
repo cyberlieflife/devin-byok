@@ -15,6 +15,7 @@
 - **Anthropic thinking 支持**：thinking{type, budget_tokens} 请求体与校验；OpenAI/Grok reasoning_effort，provider 各自发送不串字段。
 - **在线更新升级**：darwin/exe 安装包 + SHA256 校验，更新后自动重启。
 - **CI/CD**：GitHub Actions 三平台（Windows/macOS/Linux）vet/build/test 矩阵；打 tag 自动打包 Windows exe 与 macOS dmg 并发布 GitHub Release。
+- **Windows arm64 支持**：新增 windows-arm64 原生发布物（GOARCH=arm64 交叉编译），GUI 图标资源、language_server 定位与在线更新资产匹配均按架构区分。
 
 ### 修复
 
@@ -32,7 +33,7 @@
 
 ### 平台支持
 
-- Windows（官方发布物，.exe）
+- Windows（官方发布物，.exe，amd64/arm64）
 - macOS（官方发布物，.dmg，arm64/amd64）
 - Linux（开发/CI 辅助支持，源码构建）
 

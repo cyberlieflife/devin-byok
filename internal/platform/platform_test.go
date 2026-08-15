@@ -58,3 +58,31 @@ func TestMacAssetSuffix(t *testing.T) {
 		t.Fatalf("AssetSuffix() = %q, want %q", got, want)
 	}
 }
+
+func TestWindowsAssetSuffix(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows-specific release asset")
+	}
+	// 与 pack-release.ps1 产物命名对齐（devin-byok-<ver>-windows-<GOARCH>.exe）
+	want := "windows-amd64.exe"
+	if runtime.GOARCH == "arm64" {
+		want = "windows-arm64.exe"
+	}
+	if got := AssetSuffix(); got != want {
+		t.Fatalf("AssetSuffix() = %q, want %q", got, want)
+	}
+}
+
+func TestWindowsLanguageServerName(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("windows-specific language server name")
+	}
+	// Devin 客户端 language server 文件名随其安装架构而定
+	want := "language_server_windows_x64.exe"
+	if runtime.GOARCH == "arm64" {
+		want = "language_server_windows_arm64.exe"
+	}
+	if got := LanguageServerName(); got != want {
+		t.Fatalf("LanguageServerName() = %q, want %q", got, want)
+	}
+}

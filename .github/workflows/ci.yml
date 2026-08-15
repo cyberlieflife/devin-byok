@@ -53,6 +53,15 @@ jobs:
         if: runner.os == 'Windows'
         run: go build ./cmd/devin-byok-gui
 
+      # 交叉编译验证 Windows arm64 GUI 可构建（发布物由 release.yml 打包）
+      - name: Build GUI (windows arm64 cross)
+        if: runner.os == 'Windows'
+        env:
+          GOOS: windows
+          GOARCH: arm64
+          CGO_ENABLED: "0"
+        run: go build ./cmd/devin-byok-gui
+
       - name: Shell script syntax check
         if: runner.os != 'Windows'
         run: |
