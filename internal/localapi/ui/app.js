@@ -906,10 +906,6 @@ async function applyUpdate(){
 // ===== 系统提示词 + 扩展管理 =====
 window.__prompts = {};
 
-function escapeHtml(s){
-  return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
 async function refreshPrompts(){
   const box = document.getElementById('promptList');
   const st = document.getElementById('extStatus');

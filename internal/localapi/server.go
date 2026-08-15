@@ -894,6 +894,9 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	const maxWorkspacePathRetries = 5
 	const maxStreamInterruptedRetries = 2
 	streamRetries := 0
+	// streamResumed 标记发生过流中断续传：重试会把部分文本回填进 msgs，
+	// 导致最终上下文与原始 cacheKey 指纹不一致，写缓存时必须重算 key。
+	streamResumed := false
 
 	for retry := 0; retry <= maxWorkspacePathRetries; retry++ {
 		done := make(chan chatResult, 1)
@@ -1002,6 +1005,7 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 				// 从中断处继续，避免向 Devin 重复输出。
 				if strings.TrimSpace(result.text) != "" {
 					msgs = append(msgs, openai.ChatMessage{Role: "assistant", Content: result.text})
+					streamResumed = true
 				}
 				metricsAddLog("warn", fmt.Sprintf("upstream stream interrupted, resuming (%d/%d) partial=%d chars", streamRetries, maxStreamInterruptedRetries, len(result.text)))
 				continue
@@ -1102,9 +1106,14 @@ func (s *Server) handleChatLike(w http.ResponseWriter, r *http.Request, method s
 	if flusher != nil {
 		flusher.Flush()
 	}
-	// 写入响应缓存（无 tool_calls）
+	// 写入响应缓存（无 tool_calls）。若发生过流中断续传，msgs 已含回填的
+	// assistant 文本，用最终 msgs 重算 key，避免"重试后上下文"以原始指纹固化。
 	if cacheKey != "" && len(result.toolCalls) == 0 {
-		respCachePut(cfg, cacheKey, text, thinking, result.toolCalls)
+		putKey := cacheKey
+		if streamResumed {
+			putKey = respCacheKey(model, effort, composed.Hash, msgs, nil)
+		}
+		respCachePut(cfg, putKey, text, thinking, result.toolCalls)
 	}
 	tin, tout := estimateTokens(userText+parsed.SystemPrompt), estimateTokens(text+thinking)
 	if result.usage.PromptTokens > 0 {

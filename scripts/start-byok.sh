@@ -20,11 +20,17 @@ echo "[2/3] ensure LS wrapper installed..."
 
 echo "[3/3] start local-api on 127.0.0.1:8787..."
 "$PROJECT_DIR/devin-byok" start
+healthy=""
 for _ in $(seq 1 20); do
   if curl -fsS http://127.0.0.1:8787/healthz; then
     echo ""
+    healthy="1"
     break
   fi
   sleep 0.2
 done
+if [ -z "$healthy" ]; then
+  echo "ERROR: local-api did not become healthy on 127.0.0.1:8787" >&2
+  exit 1
+fi
 echo "OK. Fully restart Devin, pick BYOK model, send message."

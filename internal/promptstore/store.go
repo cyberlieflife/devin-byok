@@ -1,6 +1,8 @@
 package promptstore
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -168,16 +170,12 @@ func Delete(id string) ([]Prompt, error) {
 }
 
 func newID() string {
-	return "sp_" + time.Now().Format("20060102150405") + "_" + random3()
-}
-
-func random3() string {
-	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
-	n := time.Now().UnixNano()
-	b := make([]byte, 4)
-	for i := range b {
-		b[i] = letters[(n+int64(i*17))%int64(len(letters))]
-		n /= 7
+	// 用 crypto/rand 生成 4 字节随机后缀，避免时间戳+伪随机在
+	// 同一纳秒批量保存时碰撞导致 Upsert 覆盖错误条目。
+	var raw [4]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		// 理论上随机源失败几乎不可能；回退时间戳保证可用性。
+		return "sp_" + time.Now().Format("20060102150405.000000000")
 	}
-	return string(b)
+	return "sp_" + time.Now().Format("20060102150405") + "_" + hex.EncodeToString(raw[:])
 }

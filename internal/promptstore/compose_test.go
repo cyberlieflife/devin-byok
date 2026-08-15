@@ -85,13 +85,20 @@ func TestStrictOutputSkipsLongVerifiedProfiles(t *testing.T) {
 }
 
 func TestDetectStrictOutput(t *testing.T) {
-	for _, text := range []string{"Return only YES or NO.", "仅返回 JSON，不要解释", "Output exactly three items"} {
+	for _, text := range []string{"Return only YES or NO.", "仅返回 JSON，不要解释", "请只输出 JSON，不得添加解释"} {
 		if !DetectStrictOutput(text) {
 			t.Fatalf("strict output not detected: %q", text)
 		}
 	}
-	if DetectStrictOutput("请实现该功能并运行测试") {
-		t.Fatal("normal coding task classified as strict output")
+	// "Output exactly three items" 是数量限定，不是"只输出/不解释"契约，
+	// 不应被误判为 strict（否则会静默跳过 reliability/verification profiles）。
+	for _, text := range []string{
+		"请实现该功能并运行测试", "Output exactly three items",
+		"Return only the first matching result", "恰好输出 10 项",
+	} {
+		if DetectStrictOutput(text) {
+			t.Fatalf("normal task classified as strict output: %q", text)
+		}
 	}
 }
 
@@ -246,6 +253,28 @@ func TestApplyToMessagesBackwardCompatible(t *testing.T) {
 	all := systemText(out)
 	if !strings.Contains(all, "Reliability Contract") {
 		t.Fatalf("legacy wrapper no longer injects the reliability contract: %q", all)
+	}
+}
+
+// TestProfileBudgetSkipsLowPriorityWhenOverBudget 验证 MaxProfileBytes：
+// 预算很小时只注入高优先级（priority 小）的 profile，其余跳过并告警，
+// 且不破坏原始 system 消息。
+func TestProfileBudgetSkipsLowPriorityWhenOverBudget(t *testing.T) {
+	result := composeWithProfiles(testMessages(), ComposeContext{
+		Route: "chat", QualityMode: "verified", UserText: "请实现一个函数并运行测试",
+		MaxProfileBytes: 40,
+	}, nil)
+	if openai.TextContent(result.Messages[0].Content) != "ORIGINAL SYSTEM" {
+		t.Fatalf("original system moved under budget: %+v", result.Messages)
+	}
+	if len(result.Warnings) == 0 {
+		t.Fatal("expected a budget warning when profiles are skipped")
+	}
+	// 预算 40 字节只够一个极短 profile，verified/verification 等长文本应被跳过
+	for _, absent := range []string{"verification", "core-reliability", "coding-execution"} {
+		if containsString(result.ProfileIDs, absent) {
+			t.Fatalf("long profile %s should have been skipped under 40-byte budget: %v", absent, result.ProfileIDs)
+		}
 	}
 }
 

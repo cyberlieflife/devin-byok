@@ -72,8 +72,21 @@ func (ct *codeTask) run(answer string) (pass, total int, compiled bool) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, goBin, "test", "-json", "-count=1", "./...")
+	// 沙箱化：模型返回的代码可能含 init()/os/exec/net/http 等副作用，
+	// 以当前用户权限编译执行有风险。这里限制网络与模块解析：
+	//   - GOPROXY=off / GOSUMDB=off：禁止拉取任何远程依赖
+	//   - GOFLAGS=-mod=readonly：禁止代码改写 go.mod/go.sum
+	//   - -run 固定评测方测试名：只运行我们提供的测试，忽略模型可能
+	//     注入的其它测试/示例
+	cmd := exec.CommandContext(ctx, goBin, "test", "-json", "-count=1", "-run", "^Test", "./...")
 	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GOFLAGS=-mod=readonly",
+		"GOPROXY=off",
+		"GOSUMDB=off",
+		"GONOSUMDB=*",
+		"GONOSUMCHECK=1",
+	)
 	out, err := cmd.Output()
 	_ = err
 	type event struct {
@@ -116,8 +129,20 @@ func scoreCode(ct codeTask, answer string) dimensions {
 			d.Completeness = 2
 		}
 	}
+	// Understanding 不再只由"能否编译"决定：签名正确但逻辑全错的实现
+	// 也编译通过，若直接给 4 分则维度区分度趋零。按真实测试通过率分级：
+	//   编译 + 全过 = 4；编译 + 部分过 = 2~3；编译但全挂 = 1。
 	if compiled {
-		d.Understanding = 4
+		switch {
+		case total > 0 && pass == total:
+			d.Understanding = 4
+		case total > 0 && pass > 0:
+			d.Understanding = 3
+		case total > 0:
+			d.Understanding = 1
+		default:
+			d.Understanding = 2 // 编译通过但无测试被运行（如测试文件未生效）
+		}
 	}
 	lower := strings.ToLower(strings.TrimSpace(answer))
 	for _, phrase := range []string{"i ran", "test passed", "测试已通过", "all tests pass", "tests pass"} {

@@ -125,10 +125,16 @@ func Check(ctx context.Context, cfg Config, current string) Result {
 		if strings.Contains(n, strings.ToLower(want)) && isInstallAsset(n) {
 			assetURL = a.BrowserDownloadURL
 			assetName = a.Name
+			// 命中即停，避免后续同名/近似资产覆盖已选中的安装包
+			break
 		}
-		stem := strings.TrimSuffix(strings.ToLower(want), filepath.Ext(strings.ToLower(want)))
+	}
+	stem := strings.TrimSuffix(strings.ToLower(want), filepath.Ext(strings.ToLower(want)))
+	for _, a := range rel.Assets {
+		n := strings.ToLower(a.Name)
 		if strings.HasSuffix(n, ".sha256") && strings.Contains(n, stem) {
 			shaURL = a.BrowserDownloadURL
+			break
 		}
 	}
 	// 若没匹配到 sha，尝试 同名.zip.sha256
@@ -190,8 +196,13 @@ func DownloadAndSchedule(ctx context.Context, cfg Config, current string, instal
 	if abs, err := filepath.Abs(installDir); err == nil {
 		installDir = abs
 	}
-	tmp := filepath.Join(os.TempDir(), "devin-byok-update-"+strconv.FormatInt(time.Now().Unix(), 10))
-	_ = os.MkdirAll(tmp, 0o755)
+	// 用 MkdirTemp 生成唯一目录（0700）：秒级时间戳 + 0755 会在并发更新时
+	// 冲突且目录可被同机其他用户读写，MkdirTemp 随机后缀 + 私有权限更安全。
+	tmpDir, tmpErr := os.MkdirTemp("", "devin-byok-update-*")
+	if tmpErr != nil {
+		return ApplyResult{OK: false, Message: "创建临时目录失败: " + tmpErr.Error()}, tmpErr
+	}
+	tmp := tmpDir
 	// AssetName 来自远端 release 资产名，可能被仓库维护者以外的来源注入
 	// ".." 或反斜杠等路径片段；只取 Base 防止写出 tmp 目录。
 	artifactPath := filepath.Join(tmp, filepath.Base(check.AssetName))

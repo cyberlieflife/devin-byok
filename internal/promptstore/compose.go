@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -128,6 +129,10 @@ type ComposeContext struct {
 	// QualityEnabled is nil for legacy callers and means enabled. A non-nil
 	// false value disables all prompt enhancement, including custom profiles.
 	QualityEnabled *bool
+	// MaxProfileBytes 是可选的注入预算上限（0 = 不限制，保持旧行为）。
+	// 超过预算时按优先级跳过剩余的 append profiles 并记录告警，
+	// 避免接近 context 上限的请求注入后直接 400。以字节估算。
+	MaxProfileBytes int
 }
 
 type ComposeResult struct {
@@ -144,7 +149,14 @@ type ComposeResult struct {
 // emits hidden reasoning; only the operational contract and final response are
 // sent to the client.
 func ComposeMessages(msgs []openai.ChatMessage, ctx ComposeContext) ComposeResult {
-	profiles, _ := Load()
+	// system-prompts.json 损坏/不可读时自定义 profiles 会静默消失；
+	// 把加载错误放进 Warnings，让调用方（UI/metrics）可见而非无声吞掉。
+	profiles, err := Load()
+	if err != nil {
+		res := composeWithProfiles(msgs, ctx, nil)
+		res.Warnings = append(res.Warnings, "system-prompts.json 读取失败，自定义提示词未生效: "+err.Error())
+		return res
+	}
 	return composeWithProfiles(msgs, ctx, profiles)
 }
 
@@ -206,20 +218,38 @@ func composeWithProfiles(msgs []openai.ChatMessage, ctx ComposeContext, custom [
 	for i := len(prepend) - 1; i >= 0; i-- {
 		base = injectNote(base, prepend[i].Body, true)
 	}
+	// 注入预算：appendProfiles 已按 priority 升序（低值优先），
+	// 超过 MaxProfileBytes 时停止注入剩余 profile，保证接近 context
+	// 上限的请求不被额外注入压垮（0 表示不限制，保持旧行为）。
+	injectedBytes := 0
+	skippedForBudget := 0
+	injectedIDs := make([]string, 0, len(profiles))
+	if replace != nil {
+		injectedIDs = append(injectedIDs, replace.ID)
+	}
+	for _, p := range prepend {
+		if strings.TrimSpace(p.Body) != "" {
+			injectedIDs = append(injectedIDs, p.ID)
+		}
+	}
 	for _, p := range appendProfiles {
 		if strings.TrimSpace(p.Body) == "" {
 			continue
 		}
+		bodyBytes := len(p.Body)
+		if ctx.MaxProfileBytes > 0 && injectedBytes+bodyBytes > ctx.MaxProfileBytes {
+			skippedForBudget++
+			continue
+		}
+		injectedBytes += bodyBytes
+		injectedIDs = append(injectedIDs, p.ID)
 		base = injectNote(base, p.Body, false)
 	}
-
-	ids := make([]string, 0, len(profiles))
-	for _, p := range profiles {
-		if strings.TrimSpace(p.Body) != "" {
-			ids = append(ids, p.ID)
-		}
+	if skippedForBudget > 0 {
+		warnings = append(warnings, fmt.Sprintf("profile 注入超出预算，已跳过 %d 个 profile（MaxProfileBytes=%d）", skippedForBudget, ctx.MaxProfileBytes))
 	}
-	return ComposeResult{Messages: base, ProfileIDs: ids, Warnings: uniqueStrings(warnings), Hash: hashMessages(base), Route: ctx.Route, Task: ctx.Task, QualityMode: ctx.QualityMode}
+
+	return ComposeResult{Messages: base, ProfileIDs: injectedIDs, Warnings: uniqueStrings(warnings), Hash: hashMessages(base), Route: ctx.Route, Task: ctx.Task, QualityMode: ctx.QualityMode}
 }
 
 func builtinProfiles(ctx ComposeContext) []Prompt {
@@ -264,9 +294,8 @@ func builtinProfiles(ctx ComposeContext) []Prompt {
 			}
 		}
 	}
-	if ctx.Route == "fast_context" {
-		profiles = append(profiles, Prompt{ID: "fast-context", Title: "Fast Context", Body: fastContextPrompt, Enabled: true, Mode: ModeAppend, Priority: 60, Builtin: true})
-	} else if ctx.Route == "deepwiki" {
+	// 注意：fast_context 在函数开头已提前 return，此分支无需再处理。
+	if ctx.Route == "deepwiki" {
 		profiles = append(profiles, Prompt{ID: "deepwiki", Title: "DeepWiki", Body: deepWikiPrompt, Enabled: true, Mode: ModeAppend, Priority: 60, Builtin: true})
 	} else if ctx.Route == "codemap" {
 		profiles = append(profiles, Prompt{ID: "codemap", Title: "CodeMap", Body: codeMapPrompt, Enabled: true, Mode: ModeAppend, Priority: 60, Builtin: true})
@@ -298,8 +327,10 @@ func profileMatches(p Prompt, ctx ComposeContext) bool {
 	if scope == "" && len(p.Routes) == 0 && len(p.Models) == 0 && len(p.Tasks) == 0 {
 		return true
 	}
-	if scope == "global" {
-		return true
+	// scope=global 只表示"不按 scope 维度过滤"，条目自带的 Routes/Models/Tasks
+	// 限定仍然生效——之前无条件 return true 会忽略同一条目的其它限定条件。
+	if scope != "" && scope != "global" && scope != "model" && scope != "route" && scope != "task" {
+		return false
 	}
 	if len(p.Routes) > 0 && !containsFold(p.Routes, ctx.Route) {
 		return false
@@ -364,8 +395,11 @@ func injectNote(msgs []openai.ChatMessage, note string, front bool) []openai.Cha
 	if note == "" {
 		return msgs
 	}
+	// 去重：只当已存在内容完全相同的独立 system 消息（即之前注入过本 body）时跳过。
+	// 用精确相等而非子串包含——若 note 恰好是已有 system 的子串（例如自定义 body
+	// 与原始 system 有重叠文本），子串判断会误判"已注入"而漏掉真实注入。
 	for _, m := range msgs {
-		if m.Role == "system" && strings.Contains(openai.TextContent(m.Content), note) {
+		if m.Role == "system" && strings.TrimSpace(openai.TextContent(m.Content)) == note {
 			return msgs
 		}
 	}
@@ -490,10 +524,21 @@ func DetectStrictOutput(text string) bool {
 	if low == "" {
 		return false
 	}
+	// 匹配明确的"严格输出"指令（RE2 语法，不支持前瞻所以用两次匹配）：
+	//   1) "return/respond/output only <结果类词>" 命中即 strict；
+	//   2) 但 "return only the first/top/best..." 这类是数量/范围限定，
+	//      不算 strict（否则会静默跳过 reliability/verification/task profiles）。
+	strictRe := regexp.MustCompile("(?i)\\b(?:return|respond|output)\\s+only\\s+(?:the\\s+)?(?:[a-z]+\\s+)?(?:final\\s+)?(?:answer|result|code|json|yes|no|name|number|value|output)\\b")
+	if strictRe.MatchString(low) {
+		selectorRe := regexp.MustCompile("(?i)\\b(?:return|respond|output)\\s+only\\s+the\\s+(?:first|top|best|last|one|correct|matching|next|each)\\b")
+		if !selectorRe.MatchString(low) {
+			return true
+		}
+	}
 	markers := []string{
-		"return only", "respond only", "output only", "only output", "only the ",
-		"no explanation", "without explanation", "nothing else", "exactly ",
-		"仅返回", "只返回", "仅输出", "只输出", "不要解释", "无需解释", "不得添加",
+		"only output the", "仅返回", "只返回", "仅输出", "只输出",
+		"不要解释", "无需解释", "不要给出解释", "不得添加解释",
+		"no explanation", "without explanation", "do not explain",
 	}
 	for _, marker := range markers {
 		if strings.Contains(low, marker) {
