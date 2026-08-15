@@ -1,6 +1,10 @@
 # secrets & local
 config.yaml
 work/
+.mimosa/
+.filelist_tmp.txt
+d.txt
+diff1.txt
 dist/
 *.exe
 !internal/payload/ls-wrapper.exe
