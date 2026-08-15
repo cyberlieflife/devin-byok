@@ -51,7 +51,8 @@ func TestMacAssetSuffix(t *testing.T) {
 	}
 	want := "darwin-arm64.dmg"
 	if runtime.GOARCH != "arm64" {
-		want = "darwin-x64.dmg"
+		// 与 pack-release.sh 产物命名对齐（darwin-amd64.dmg）
+		want = "darwin-amd64.dmg"
 	}
 	if got := AssetSuffix(); got != want {
 		t.Fatalf("AssetSuffix() = %q, want %q", got, want)
