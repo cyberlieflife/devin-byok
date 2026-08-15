@@ -46,6 +46,7 @@ go build -ldflags "-H windowsgui -s -w $ld" -o devin-byok-gui.exe ./cmd/devin-by
 if ($LASTEXITCODE -ne 0) { throw "GUI build failed" }
 
 $dist = Join-Path $Root "dist"
+New-Item -ItemType Directory -Force -Path $dist | Out-Null
 $exe = Join-Path $dist ("devin-byok-" + $Version + "-windows-amd64.exe")
 if (Test-Path $exe) { Remove-Item -Force $exe }
 Copy-Item .\devin-byok-gui.exe $exe
