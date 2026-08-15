@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -35,12 +36,15 @@ jobs:
     name: package macOS (${{ matrix.arch }})
     strategy:
       fail-fast: false
+      # macos-13 已退役（无 runner）。macos-14/15 均为 arm64 机器，
+      # amd64 产物通过 GOARCH=amd64 + CGO_ENABLED=1 交叉编译生成
+      # （Apple Silicon 的 Xcode clang 支持生成 x86_64 代码）。
       matrix:
         include:
           - arch: arm64
             runner: macos-14
           - arch: amd64
-            runner: macos-13
+            runner: macos-14
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -78,7 +82,6 @@ jobs:
         run: |
           set -euo pipefail
           TAG=${GITHUB_REF_NAME}
-          # 收集产物：exe/dmg + sha256
           ASSETS=()
           for f in dist-artifacts/devin-byok-*; do
             ASSETS+=("$f")
