@@ -4,59 +4,34 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sync"
-	"syscall"
 	"time"
-	"unsafe"
 
 	"devin-byok/internal/config"
 	"devin-byok/internal/desktop"
 	"devin-byok/internal/devin"
+	"devin-byok/internal/extinstall"
 	"devin-byok/internal/ideinject"
 	"devin-byok/internal/localapi"
 	"devin-byok/internal/logx"
 	"devin-byok/internal/lsinstall"
-	"devin-byok/internal/extinstall"
 	"devin-byok/internal/paths"
+	"devin-byok/internal/platform"
 
 	"github.com/getlantern/systray"
-	"github.com/jchv/go-webview2"
 )
 
 var (
-	title      = "Devin BYOK"
-	user32     = syscall.NewLazyDLL("user32.dll")
-	kernel32   = syscall.NewLazyDLL("kernel32.dll")
-	procFind   = user32.NewProc("FindWindowW")
-	procShow   = user32.NewProc("ShowWindow")
-	procIsIc   = user32.NewProc("IsIconic")
-	procSetFG  = user32.NewProc("SetForegroundWindow")
-	procMsgBox = user32.NewProc("MessageBoxW")
+	title = "Devin BYOK"
 
 	embedMu   sync.Mutex
 	embedHTTP *http.Server
-
-	singletonMutex uintptr
-)
-
-const (
-	swHide             = 0
-	swRestore          = 9
-	swShow             = 5
-	errorAlreadyExists = 183
-	mbIconError        = 0x00000010
 )
 
 func main() {
-	runtime.LockOSThread()
 	setupFileLog()
-	hideConsole()
-
-	if !ensureSingleInstance() {
-		bringExistingToFront()
+	if !guiInit() {
 		return
 	}
 
@@ -71,39 +46,38 @@ func main() {
 		logx.Infof("wrapper binary: %s", wpath)
 	}
 
+	// 3.7.16: 一次性还原历史对 bundle 的修改（旧方案的 ideinject 注入与 wrapper 备份残留），
+	// 消除 Devin "installation appears to be corrupt" 误报。
+	cfg0, err := config.Load(paths.FindConfig())
+	installDir := ""
+	if err == nil {
+		installDir = cfg0.Devin.InstallDir
+	}
+	if err := ideinject.RestoreContextUsageDonut(); err != nil {
+		logx.Warnf("restore ideinject: %v", err)
+	} else {
+		logx.Infof("ideinject restored (bundle untouched)")
+	}
+	lsinstall.CleanBundleArtifacts(installDir)
+	logx.Infof("bundle artifacts cleaned")
+
 	prefs := desktop.LoadPrefs()
 	systray.Register(onTrayReady, onTrayExit)
 
-	if err := startService(); err != nil {
-		logx.Warnf("start service: %v", err)
-	} else {
-		go autoInstallWrapper()
+	if err := startEmbedded(); err != nil {
+		logx.Warnf("start management server: %v", err)
 	}
 	waitAPI(80)
 
 	uiURL := "http://127.0.0.1:8787/ui/"
-	dataPath := filepath.Join(os.Getenv("APPDATA"), "devin-byok", "webview2")
-	_ = os.MkdirAll(dataPath, 0o755)
 
-	w := webview2.NewWithOptions(webview2.WebViewOptions{
-		Debug:     false,
-		AutoFocus: true,
-		DataPath:  dataPath,
-		WindowOptions: webview2.WindowOptions{
-			Title:  title,
-			Width:  1100,
-			Height: 780,
-			Center: true,
-		},
-	})
+	w := guiCreateWindow(uiURL)
 	if w == nil {
-		logx.Errorf("webview2 init failed; dataPath=%s", dataPath)
-		messageBox(title, "无法初始化 WebView2 窗口。\n\n请安装 Microsoft Edge WebView2 Runtime 后重试。\n将尝试用系统浏览器打开管理页。", mbIconError)
-		_ = exec.Command("cmd", "/c", "start", "", uiURL).Start()
+		openBrowser(uiURL)
 		select {}
 	}
 
-	_ = w.Bind("nativeStart", func() string {
+	guiBind(w, "nativeStart", func() string {
 		if err := startService(); err != nil {
 			return "error: " + err.Error()
 		}
@@ -113,11 +87,11 @@ func main() {
 		}
 		return "started but api not ready"
 	})
-	_ = w.Bind("nativeStop", func() string { return stopService() })
-	_ = w.Bind("nativeOnline", func() bool { return online() })
-	_ = w.Bind("nativeHideToTray", func() string { hideMainWindow(); return "ok" })
-	_ = w.Bind("nativeShowWindow", func() string { showMainWindow(); return "ok" })
-	_ = w.Bind("nativeInstallWrapper", func() string {
+	guiBind(w, "nativeStop", func() string { return stopService() })
+	guiBind(w, "nativeOnline", func() bool { return online() })
+	guiBind(w, "nativeHideToTray", func() string { hideMainWindow(); return "ok" })
+	guiBind(w, "nativeShowWindow", func() string { showMainWindow(); return "ok" })
+	guiBind(w, "nativeInstallWrapper", func() string {
 		cfg, err := config.Load(paths.FindConfig())
 		if err != nil {
 			return "error: " + err.Error()
@@ -128,15 +102,14 @@ func main() {
 		}
 		return fmt.Sprintf("ok installed=%s", meta.Target)
 	})
-	_ = w.Bind("nativeQuit", func() string {
+	guiBind(w, "nativeQuit", func() string {
 		go func() {
 			time.Sleep(400 * time.Millisecond)
 			quitApp()
 		}()
 		return "ok"
 	})
-	// 更新场景：尽快退出，不做 stop/restore，避免拖住文件锁
-	_ = w.Bind("nativeQuitForce", func() string {
+	guiBind(w, "nativeQuitForce", func() string {
 		go func() {
 			time.Sleep(200 * time.Millisecond)
 			systray.Quit()
@@ -146,32 +119,27 @@ func main() {
 		return "ok"
 	})
 
-	w.SetSize(1100, 780, webview2.HintNone)
-	w.Navigate(uiURL)
-	setWindowIconFromICO()
+	guiSetSize(w, 1100, 780)
+	guiNavigate(w, uiURL)
+	guiSetIcon()
 
-	go watchMinimize()
+	go guiWatchMinimize()
 	if prefs.StartMinimized {
 		go func() {
 			time.Sleep(700 * time.Millisecond)
 			hideMainWindow()
 		}()
 	}
-	w.Run()
+	guiRun(w)
 	quitApp()
 }
 
 func autoInstallWrapper() {
-	cfg, err := config.Load(paths.FindConfig())
-	if err != nil {
-		return
-	}
-	meta, err := lsinstall.InstallIfNeeded(cfg.Devin.InstallDir)
-	if err != nil {
-		logx.Warnf("auto install wrapper: %v", err)
-		return
-	}
-	logx.Infof("wrapper installed: %s", meta.Target)
+	// 3.7.16 适配：不再向 Devin.app bundle 写入 wrapper（签名应用受系统保护，
+	// 且会导致 "installation appears to be corrupt"）。
+	// 改用 codeiumDev.languageServerBinaryPath 覆盖，从用户目录启动 wrapper，
+	// 由 applyFromConfig 写入 settings.json 完成。
+	logx.Infof("auto install wrapper: skipped (languageServerBinaryPath override in use)")
 }
 
 func onTrayReady() {
@@ -212,115 +180,26 @@ func onTrayReady() {
 func onTrayExit() {}
 
 func quitApp() {
-	// stop service + restore portal on process exit
 	_ = stopService()
+	closeEmbedded()
 	systray.Quit()
 	time.Sleep(80 * time.Millisecond)
 	os.Exit(0)
 }
 
-func watchMinimize() {
-	for {
-		time.Sleep(400 * time.Millisecond)
-		if !desktop.LoadPrefs().MinimizeToTray {
-			continue
-		}
-		if h := findMainHWND(); h != 0 {
-			if r, _, _ := procIsIc.Call(h); r != 0 {
-				procShow.Call(h, uintptr(swHide))
-			}
-		}
-	}
-}
-
-func findMainHWND() uintptr {
-	ptr, err := syscall.UTF16PtrFromString(title)
-	if err != nil {
-		return 0
-	}
-	h, _, _ := procFind.Call(0, uintptr(unsafe.Pointer(ptr)))
-	return h
-}
-
-func hideMainWindow() {
-	if h := findMainHWND(); h != 0 {
-		procShow.Call(h, uintptr(swHide))
-	}
-}
-
-func showMainWindow() {
-	h := findMainHWND()
-	if h == 0 {
-		return
-	}
-	procShow.Call(h, uintptr(swRestore))
-	procShow.Call(h, uintptr(swShow))
-	procSetFG.Call(h)
-}
-
-func bringExistingToFront() {
-	for i := 0; i < 15; i++ {
-		if findMainHWND() != 0 {
-			showMainWindow()
-			return
-		}
-		time.Sleep(120 * time.Millisecond)
-	}
-	showMainWindow()
-}
-
-func hideConsole() {
-	getConsoleWindow := kernel32.NewProc("GetConsoleWindow")
-	freeConsole := kernel32.NewProc("FreeConsole")
-	hwnd, _, _ := getConsoleWindow.Call()
-	if hwnd != 0 {
-		showWindow := user32.NewProc("ShowWindow")
-		showWindow.Call(hwnd, 0)
-		freeConsole.Call()
-	}
-}
-
-func messageBox(caption, text string, flags uintptr) {
-	c, _ := syscall.UTF16PtrFromString(caption)
-	t, _ := syscall.UTF16PtrFromString(text)
-	procMsgBox.Call(0, uintptr(unsafe.Pointer(t)), uintptr(unsafe.Pointer(c)), flags)
-}
-
-func setupFileLog() {
-	dir := filepath.Join(os.Getenv("APPDATA"), "devin-byok")
-	_ = os.MkdirAll(dir, 0o755)
-	path := filepath.Join(dir, "gui.log")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	os.Stdout = f
-	os.Stderr = f
-	logx.Infof("gui log -> %s", path)
-}
-
 func startService() error {
-	return startEmbedded()
+	if err := startEmbedded(); err != nil {
+		return err
+	}
+	if !waitAPI(50) {
+		return fmt.Errorf("management API not ready")
+	}
+	return postControl("start")
 }
 
 func stopService() string {
-	embedMu.Lock()
-	hasEmbed := embedHTTP != nil
-	if hasEmbed {
-		_ = embedHTTP.Close()
-		embedHTTP = nil
-	}
-	embedMu.Unlock()
-	if hasEmbed {
-		_, _ = devin.RestorePortal()
-	_ = ideinject.RestoreContextUsageDonut()
-		return "ok"
-	}
-	client := &http.Client{Timeout: 3 * time.Second}
-	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:8787/api/control/stop", nil)
-	if err == nil {
-		if resp, err := client.Do(req); err == nil {
-			resp.Body.Close()
+	if online() {
+		if err := postControl("stop"); err == nil {
 			return "ok"
 		}
 	}
@@ -332,7 +211,6 @@ func stopService() string {
 
 func startEmbedded() error {
 	if online() {
-		applyFromConfig()
 		return nil
 	}
 	cfgPath := paths.FindConfig()
@@ -361,7 +239,33 @@ func startEmbedded() error {
 		}
 	}()
 	time.Sleep(250 * time.Millisecond)
-	applyFromConfig()
+	return nil
+}
+
+func closeEmbedded() {
+	embedMu.Lock()
+	hs := embedHTTP
+	embedHTTP = nil
+	embedMu.Unlock()
+	if hs != nil {
+		_ = hs.Close()
+	}
+}
+
+func postControl(action string) error {
+	client := &http.Client{Timeout: 20 * time.Second}
+	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:8787/api/control/"+action, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("control %s failed: HTTP %d", action, resp.StatusCode)
+	}
 	return nil
 }
 
@@ -370,18 +274,16 @@ func applyFromConfig() {
 	if err != nil {
 		return
 	}
-	if _, err := devin.ApplyPortal(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys); err != nil {
-		logx.Warnf("apply: %v", err)
+	if wpath, err := lsinstall.MaterializeWrapper(); err == nil {
+		if _, err := devin.ApplyLocalRuntime(cfg.Server.PublicBase, cfg.Devin.PortalURLKeys, wpath); err != nil {
+			logx.Warnf("apply local runtime: %v", err)
+		} else {
+			logx.Infof("apply local runtime ok: %s", wpath)
+		}
 	} else {
-		logx.Infof("apply ok")
+		logx.Warnf("materialize wrapper: %v", err)
 	}
-	// 会话栏上下文圆圈：悬停四色挖空环
-	if err := ideinject.ApplyContextUsageDonut(cfg.Devin.InstallDir); err != nil {
-		logx.Warnf("ideinject context-usage: %v", err)
-	} else {
-		logx.Infof("ideinject context-usage ok")
-	}
-	// 启动时安装/启用 BYOK 提示词扩展
+	// 3.7.16: 不再向 bundle 注入任何内容（ideinject 已停用）
 	if _, err := extinstall.InstallFromFS(extinstall.ExtFS, extinstall.ExtRoot); err != nil {
 		logx.Warnf("extension install: %v", err)
 	} else {
@@ -410,74 +312,15 @@ func waitAPI(n int) bool {
 	return online()
 }
 
-func ensureSingleInstance() bool {
-	createMutex := kernel32.NewProc("CreateMutexW")
-	closeHandle := kernel32.NewProc("CloseHandle")
-	name, err := syscall.UTF16PtrFromString(`Local\DevinBYOK_GUI_Singleton`)
-	if err != nil {
-		return true
-	}
-	handle, _, errno := createMutex.Call(0, 0, uintptr(unsafe.Pointer(name)))
-	if handle == 0 {
-		return true
-	}
-	if errno == syscall.Errno(errorAlreadyExists) {
-		_, _, _ = closeHandle.Call(handle)
-		return false
-	}
-	singletonMutex = handle
-	return true
-}
-
-// setWindowIconFromICO 将嵌入的 Devin 产品图标设为窗口/任务栏图标。
-func setWindowIconFromICO() {
-	if len(desktop.IconICO) == 0 {
-		return
-	}
-	dir := filepath.Join(os.Getenv("APPDATA"), "devin-byok")
+func setupFileLog() {
+	dir := platform.DataDir()
 	_ = os.MkdirAll(dir, 0o755)
-	icoPath := filepath.Join(dir, "app-icon.ico")
-	if err := os.WriteFile(icoPath, desktop.IconICO, 0o644); err != nil {
-		return
-	}
-	// 等窗口创建
-	go func() {
-		for i := 0; i < 50; i++ {
-			h := findMainHWND()
-			if h != 0 {
-				applyIconFile(h, icoPath)
-				return
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-	}()
-}
-
-func applyIconFile(hwnd uintptr, icoPath string) {
-	// LoadImageW IMAGE_ICON=1, LR_LOADFROMFILE=0x10, LR_DEFAULTSIZE=0x40
-	const (
-		imageIcon     = 1
-		lrLoadFromFile = 0x00000010
-		lrDefaultSize  = 0x00000040
-		wmSetIcon      = 0x0080
-		iconSmall      = 0
-		iconBig        = 1
-	)
-	user32 := syscall.NewLazyDLL("user32.dll")
-	loadImage := user32.NewProc("LoadImageW")
-	sendMessage := user32.NewProc("SendMessageW")
-	pathPtr, err := syscall.UTF16PtrFromString(icoPath)
+	path := filepath.Join(dir, "gui.log")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
-	// big 32
-	hBig, _, _ := loadImage.Call(0, uintptr(unsafe.Pointer(pathPtr)), imageIcon, 32, 32, lrLoadFromFile)
-	// small 16
-	hSmall, _, _ := loadImage.Call(0, uintptr(unsafe.Pointer(pathPtr)), imageIcon, 16, 16, lrLoadFromFile)
-	if hBig != 0 {
-		sendMessage.Call(hwnd, wmSetIcon, iconBig, hBig)
-	}
-	if hSmall != 0 {
-		sendMessage.Call(hwnd, wmSetIcon, iconSmall, hSmall)
-	}
+	os.Stdout = f
+	os.Stderr = f
+	logx.Infof("gui log -> %s", path)
 }

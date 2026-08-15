@@ -262,7 +262,8 @@ func extractWorkspaceRoots(plain []byte) []string {
 		}
 		// 过滤系统目录噪声
 		low := strings.ToLower(p)
-		if strings.Contains(low, "\\windows\\") || strings.Contains(low, "/windows/") {
+		if strings.Contains(low, "\\windows\\") || strings.Contains(low, "/windows/") ||
+			strings.Contains(low, "/system/") || strings.Contains(low, "/private/") {
 			return
 		}
 		found[p] = true
@@ -286,6 +287,14 @@ func extractWorkspaceRoots(plain []byte) []string {
 	for _, m := range winPathRe.FindAllString(text, -1) {
 		add(m)
 	}
+	// macOS/Linux 工作区根（/Users/...、/home/...、/workspace/...）：
+	// 纯 Unix 绝对路径不会命中 winPathRe，需单独提取，否则根集合为空
+	// 时 pathOutsideWorkspace 恒放行、工作区外搜索防护在 Unix 上失效。
+	for _, m := range regexp.MustCompile(`(?i)(?:workspace[^\x00]{0,60}?)?(/(?:Users|home|workspace|projects?|repo)[^\x00\s"']{2,200})`).FindAllStringSubmatch(text, -1) {
+		if len(m) > 1 {
+			add(m[1])
+		}
+	}
 
 	// 限制数量，避免噪声根过多
 	if len(roots) > 6 {
@@ -301,7 +310,6 @@ func normalizePath(p string) string {
 	}
 	p = strings.TrimPrefix(p, "file:///")
 	p = strings.TrimPrefix(p, "file://")
-	p = strings.ReplaceAll(p, "/", "\\")
 	// URL decode light
 	if strings.Contains(p, "%") {
 		if u, err := url.PathUnescape(p); err == nil {
@@ -309,16 +317,20 @@ func normalizePath(p string) string {
 		}
 	}
 	p = filepath.Clean(p)
-	return strings.ToLower(p)
+	// Windows 路径：统一斜杠并忽略大小写（NTFS 不敏感）；
+	// Unix 路径（/ 开头）保留大小写与斜杠，避免在大小写敏感文件系统上误判。
+	if isWindowsPath(p) {
+		p = strings.ReplaceAll(p, "/", "\\")
+		return strings.ToLower(p)
+	}
+	return p
 }
-
 func pathOutsideWorkspace(path string, roots []string) bool {
 	if path == "" || len(roots) == 0 {
 		return false
 	}
 	p := normalizePath(path)
-	// 相对路径不判定
-	if !regexp.MustCompile(`(?i)^[a-z]:\\`).MatchString(p) && !strings.HasPrefix(p, `\\`) {
+	if !isAbsolutePath(p) {
 		return false
 	}
 	for _, r := range roots {
@@ -326,11 +338,28 @@ func pathOutsideWorkspace(path string, roots []string) bool {
 		if rr == "" {
 			continue
 		}
-		if p == rr || strings.HasPrefix(p, strings.TrimRight(rr, `\`)+`\`) {
+		if p == rr || strings.HasPrefix(p, strings.TrimRight(rr, `\\`)+`\\`) {
 			return false
 		}
 	}
 	return true
+}
+
+func isAbsolutePath(p string) bool {
+	// Windows 绝对路径：C:\、UNC \\server\share、或已归一化的盘符路径
+	if isWindowsPath(p) {
+		return true
+	}
+	// Unix 绝对路径：/ 开头（macOS/Linux 工作区根）
+	return strings.HasPrefix(p, "/")
+}
+
+// isWindowsPath 判断路径是否为 Windows 形态（盘符或 UNC 前缀）。
+func isWindowsPath(p string) bool {
+	if regexp.MustCompile(`(?i)^[a-z]:[\\/]`).MatchString(p) {
+		return true
+	}
+	return strings.HasPrefix(p, `\\`)
 }
 
 // humanizeChatError 将上游/网络错误转成可读中文。

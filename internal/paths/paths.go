@@ -5,21 +5,13 @@ import (
 	"path/filepath"
 
 	"devin-byok/internal/payload"
+	"devin-byok/internal/platform"
 )
 
-// DirName is the user data directory name managed by GUI.
 const DirName = ".devin-byok"
 
-// Dir returns data root: %USERPROFILE%\.devin-byok
-// Falls back to %APPDATA%\devin-byok when home is unavailable.
 func Dir() string {
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, DirName)
-	}
-	if app := os.Getenv("APPDATA"); app != "" {
-		return filepath.Join(app, "devin-byok")
-	}
-	return DirName
+	return platform.DataDir()
 }
 
 // EnsureDir creates the data directory.
@@ -97,9 +89,16 @@ func legacyConfigCandidates() []string {
 		out = append(out, filepath.Join(filepath.Dir(exe), "config.yaml"))
 	}
 	out = append(out, "config.yaml")
+	// 历史数据目录：master(v1.2.x) 在 Windows 用 ~/.devin-byok，
+	// v1.0.0 起改为 platform.DataDir()（%APPDATA%\devin-byok）。
+	// 升级用户的数据目录不迁移会导致 config/capture/system-prompts 静默丢失，
+	// 这里把旧默认位置加入候选，EnsureConfig 会优先迁移已存在的旧配置。
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		out = append(out, filepath.Join(home, ".devin-byok", "config.yaml"))
+	}
 	if app := os.Getenv("APPDATA"); app != "" {
 		out = append(out, filepath.Join(app, "devin-byok", "config.yaml"))
 	}
-	out = append(out, `D:\Devin-byok\config.yaml`)
+	out = append(out, filepath.Join(platform.DataDir(), "config.yaml"))
 	return out
 }

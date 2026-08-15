@@ -1,4 +1,4 @@
-﻿package localapi
+package localapi
 
 import (
 	"context"
@@ -9,9 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"devin-byok/internal/pbwire"
-	"devin-byok/internal/upstream/openai"
 	"devin-byok/internal/logx"
+	"devin-byok/internal/pbwire"
+	"devin-byok/internal/promptstore"
+	"devin-byok/internal/upstream/openai"
 )
 
 // CodeMap 相关 RPC（多数由 Language Server 本机处理；若打到 api_server 则在此兜底）。
@@ -227,16 +228,24 @@ func (s *Server) handleGenerateCodeMap(w http.ResponseWriter, r *http.Request, m
 			{Role: "system", Content: sys},
 			{Role: "user", Content: prompt},
 		}
+		composed := promptstore.ComposeMessages(msgs, promptstore.ComposeContext{
+			Route: "codemap", ModelID: uiModel, Family: prov.FamilyUID,
+			UserText: prompt, QualityMode: "balanced", QualityEnabled: boolPtr(cfg.Quality.Enabled),
+		})
+		msgs = composed.Messages
+		metricsPromptContext("codemap", promptstore.DetectTask(prompt), "balanced", cfg.ResolveThinking(uiModel), composed.ProfileIDs, composed.Hash)
 		maxTok := 2048
 		if m, ok := cfg.FindModel(uiModel); ok && m.MaxTokens > 0 && m.MaxTokens < maxTok {
 			maxTok = m.MaxTokens
 		}
 		opt := openai.ChatOptions{
-			Thinking:      cfg.ResolveThinking(uiModel),
-			ThinkingParam: cfg.Upstream.Thinking.Param,
-			MaxTokens:     maxTok,
-			BaseURL:       prov.BaseURL,
-			APIKey:        prov.APIKey,
+			Thinking:             cfg.ResolveThinking(uiModel),
+			ThinkingParam:        firstNonEmptyStr(prov.ThinkingParam, cfg.Upstream.Thinking.Param),
+			ThinkingType:         prov.ThinkingType,
+			ThinkingBudgetTokens: prov.ThinkingBudgetTokens,
+			MaxTokens:            maxTok,
+			BaseURL:              prov.BaseURL,
+			APIKey:               prov.APIKey,
 		}
 		timeoutSec := cfg.ResolveChatTimeoutSec(false)
 		if timeoutSec <= 0 {
@@ -360,7 +369,7 @@ func fallbackCodeMapJSON(prompt, note string) string {
 		Nodes: []node{n0},
 		Edges: []edge{},
 		Items: []item{{Title: n0.Title, Description: n0.Description, Content: n0.Content, Location: n0.Location}},
-		Note: note,
+		Note:  note,
 	}
 	b, _ := json.Marshal(d)
 	return string(b)
@@ -445,4 +454,3 @@ func firstStr(m map[string]any, keys ...string) string {
 	}
 	return ""
 }
-

@@ -29,18 +29,15 @@ func respCacheEnabled(cfg *config.File) bool {
 	return cfg != nil && cfg.ResponseCacheEnabled()
 }
 
-func respCacheKey(model, effort string, msgs []openai.ChatMessage, tools []openai.Tool) string {
+func respCacheKey(model, effort, promptHash string, msgs []openai.ChatMessage, tools []openai.Tool) string {
 	type finger struct {
-		Model  string              `json:"m"`
-		Effort string              `json:"e"`
-		Msgs   []openai.ChatMessage `json:"msgs"`
-		Tools  []string            `json:"tools"`
+		Model      string               `json:"m"`
+		Effort     string               `json:"e"`
+		PromptHash string               `json:"p"`
+		Msgs       []openai.ChatMessage `json:"msgs"`
+		Tools      []openai.Tool        `json:"tools"`
 	}
-	ts := make([]string, 0, len(tools))
-	for _, t := range tools {
-		ts = append(ts, t.Function.Name)
-	}
-	b, _ := json.Marshal(finger{Model: model, Effort: effort, Msgs: msgs, Tools: ts})
+	b, _ := json.Marshal(finger{Model: model, Effort: effort, PromptHash: promptHash, Msgs: msgs, Tools: tools})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }

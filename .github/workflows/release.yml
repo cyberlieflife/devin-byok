@@ -1,0 +1,87 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: package windows amd64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache: true
+
+      - name: Package
+        shell: pwsh
+        run: ./scripts/pack-release.ps1 -Version $($env:GITHUB_REF_NAME -replace '^v','')
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: dist/devin-byok-*-windows-amd64.exe*
+          if-no-files-found: error
+
+  build-macos:
+    name: package macOS (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+          - arch: amd64
+            runner: macos-13
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache: true
+
+      - name: Package
+        env:
+          GOARCH: ${{ matrix.arch }}
+        run: ./scripts/pack-release.sh ${GITHUB_REF_NAME#v}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}-release
+          path: dist/devin-byok-*-darwin-${{ matrix.arch }}.dmg*
+          if-no-files-found: error
+
+  publish:
+    name: publish github release
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=${GITHUB_REF_NAME}
+          # 收集产物：exe/dmg + sha256
+          ASSETS=()
+          for f in dist-artifacts/devin-byok-*; do
+            ASSETS+=("$f")
+          done
+          echo "Releasing ${TAG} with ${#ASSETS[@]} assets"
+          gh release create "${TAG}" "${ASSETS[@]}" --title "${TAG}" --generate-notes || true

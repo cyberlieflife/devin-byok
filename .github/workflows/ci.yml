@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+          cache: true
+
+      # GUI 依赖 systray（Linux 需要 ayatana-appindicator 系统库），
+      # 且平台抽象层仅面向 Windows/macOS 官方产物。
+      # Linux runner 只构建/测试非 GUI 包。
+      - name: Vet (non-GUI)
+        run: |
+          go vet ./internal/...
+          go vet ./cmd/devin-byok ./cmd/ls-wrapper ./cmd/prompt-eval
+
+      - name: Vet GUI
+        if: runner.os != 'Linux'
+        run: go vet ./cmd/devin-byok-gui
+
+      - name: Build (non-GUI packages)
+        run: go build ./internal/... ./cmd/devin-byok ./cmd/ls-wrapper ./cmd/prompt-eval
+
+      - name: Test
+        run: |
+          go test ./internal/...
+          go test ./cmd/devin-byok ./cmd/ls-wrapper ./cmd/prompt-eval
+
+      - name: Build GUI (darwin)
+        if: runner.os == 'macOS'
+        run: go build ./cmd/devin-byok-gui
+
+      - name: Build GUI (windows)
+        if: runner.os == 'Windows'
+        run: go build ./cmd/devin-byok-gui
+
+      - name: Shell script syntax check
+        if: runner.os != 'Windows'
+        run: |
+          bash -n scripts/start-byok.sh scripts/stop-byok.sh scripts/start-local-api.sh scripts/uninstall-all.sh scripts/install-all.sh scripts/pack-release.sh

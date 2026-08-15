@@ -140,11 +140,14 @@ func parseToolsJSON(s string) []openai.Tool {
 }
 
 // buildDevstralResponse GetDevstralStreamResponse（LS rawDesc）:
-//   string output = 2;
-//   repeated ChatToolCall tool_calls = 3;
+//
+//	string output = 2;
+//	repeated ChatToolCall tool_calls = 3;
 //
 // 关键点：LS handlers.parseMistralToolCalls 从 output 文本解析
-//   [TOOL_CALLS]name[ARGS]{json}
+//
+//	[TOOL_CALLS]name[ARGS]{json}
+//
 // 仅写 proto tool_calls、output 为空 → “Bad response format. The model returned no tool calls.”
 // ChatToolCall: id=1 name=2 arguments_json=3；官方要求每轮恰好 1 个 tool call。
 func buildDevstralResponse(output string, calls []openaiToolCallView) []byte {
@@ -261,8 +264,12 @@ func (s *Server) handleGetDevstralStream(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	msgs = injectFastContextAgentHint(msgs)
-	msgs = promptstore.ApplyToMessages(msgs)
+	composed := promptstore.ComposeMessages(msgs, promptstore.ComposeContext{
+		Route: "fast_context", ModelID: uiModel, Family: prov.FamilyUID,
+		UserText: userText, HasTools: len(tools) > 0, QualityMode: "fast", QualityEnabled: boolPtr(cfg.Quality.Enabled),
+	})
+	msgs = composed.Messages
+	metricsPromptContext("fast_context", promptstore.DetectTask(userText), "fast", cfg.ResolveThinking(uiModel), composed.ProfileIDs, composed.Hash)
 
 	// Fast Context 后续轮：强制小输出 + 短超时，禁止沿用 family 的 16k max_tokens
 	maxTok := 1024
@@ -276,16 +283,18 @@ func (s *Server) handleGetDevstralStream(w http.ResponseWriter, r *http.Request,
 	// 给上游最多约 3.5s；整段 RPC 必须在 LS 约 6s 窗口内结束
 	const fcUpstreamBudget = 3500 * time.Millisecond
 	chatOpt := openai.ChatOptions{
-		Thinking:      cfg.ResolveThinking(uiModel),
-		ThinkingParam: cfg.Upstream.Thinking.Param,
-		Temperature:   cfg.Upstream.Sampling.Temperature,
-		MaxTokens:     maxTok,
-		TopP:          cfg.Upstream.Sampling.TopP,
-		BaseURL:       prov.BaseURL,
-		APIKey:        prov.APIKey,
-		Tools:         tools,
-		ToolChoice:    toolChoice,
-		HTTPTimeout:   fcUpstreamBudget + 500*time.Millisecond,
+		Thinking:             cfg.ResolveThinking(uiModel),
+		ThinkingParam:        firstNonEmptyStr(prov.ThinkingParam, cfg.Upstream.Thinking.Param),
+		ThinkingType:         prov.ThinkingType,
+		ThinkingBudgetTokens: prov.ThinkingBudgetTokens,
+		Temperature:          cfg.Upstream.Sampling.Temperature,
+		MaxTokens:            maxTok,
+		TopP:                 cfg.Upstream.Sampling.TopP,
+		BaseURL:              prov.BaseURL,
+		APIKey:               prov.APIKey,
+		Tools:                tools,
+		ToolChoice:           toolChoice,
+		HTTPTimeout:          fcUpstreamBudget + 500*time.Millisecond,
 	}
 
 	logx.Infof("devstral/fast-context LATER-TURN model=%s upstream=%s tools=%d user=%q plain=%d budget=%s", uiModel, model, len(tools), truncate(userText, 80), len(plain), fcUpstreamBudget)
@@ -401,9 +410,6 @@ func (s *Server) writeDevstralStream(w http.ResponseWriter, fn func(write func([
 		flusher.Flush()
 	}
 }
-
-
-
 
 func devstralNeedsForcedTool(msgs []openai.ChatMessage) bool {
 	// 已有 tool 结果的多轮：auto；否则首轮 required
@@ -563,7 +569,6 @@ func synthesizeRestrictedExec(userText, modelText string) []openai.ToolCall {
 	tc.Function.Arguments = string(raw)
 	return []openai.ToolCall{tc}
 }
-
 
 func devstralHasToolResults(msgs []openai.ChatMessage) bool {
 	for _, m := range msgs {
@@ -754,4 +759,3 @@ func ensureAnswerToolXML(calls []openai.ToolCall, toolResultText, userText strin
 	// 若模型又回了 restricted_exec 且已是后续轮，可保留；若完全没有 answer 且结果已够，可追加 answer
 	return out
 }
-
