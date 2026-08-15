@@ -1,7 +1,8 @@
-﻿package lsinstall_test
+package lsinstall_test
 
 import (
 	"os"
+	"runtime"
 	"testing"
 
 	"devin-byok/internal/lsinstall"
@@ -9,6 +10,9 @@ import (
 )
 
 func TestMaterialize(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		t.Skip("wrapper binary is only embedded for Windows/macOS releases")
+	}
 	if len(payload.LSWrapper) < 1000 {
 		t.Fatal("wrapper empty")
 	}
