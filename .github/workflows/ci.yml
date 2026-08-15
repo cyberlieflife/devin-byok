@@ -28,11 +28,14 @@ jobs:
       # GUI 依赖 systray（Linux 需要 ayatana-appindicator 系统库），
       # 且平台抽象层仅面向 Windows/macOS 官方产物。
       # Linux runner 只构建/测试非 GUI 包。
-      - name: Vet
+      - name: Vet (non-GUI)
         run: |
           go vet ./internal/...
           go vet ./cmd/devin-byok ./cmd/ls-wrapper ./cmd/prompt-eval
-          go vet ./cmd/devin-byok-gui
+
+      - name: Vet GUI
+        if: runner.os != 'Linux'
+        run: go vet ./cmd/devin-byok-gui
 
       - name: Build (non-GUI packages)
         run: go build ./internal/... ./cmd/devin-byok ./cmd/ls-wrapper ./cmd/prompt-eval
