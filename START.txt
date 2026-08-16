@@ -1,4 +1,4 @@
-﻿Devin BYOK
+Devin BYOK
 
 macOS:
 1. Open the .dmg and drag Devin BYOK to Applications
