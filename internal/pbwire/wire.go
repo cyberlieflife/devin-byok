@@ -127,7 +127,9 @@ func ParseFields(b []byte) []Field {
 				return out
 			}
 			i += n2
-			if i+int(ln) > len(b) {
+			// 用 uint64 比较，避免 ln 超过 int64 范围时 int(ln) 溢出为负，
+			// 导致切片越界 panic。
+			if ln > uint64(len(b)-i) {
 				return out
 			}
 			out = append(out, Field{Number: num, Wire: wt, Bytes: append([]byte(nil), b[i:i+int(ln)]...)})
@@ -152,6 +154,10 @@ func readVarint(b []byte, i int) (uint64, int) {
 		c := b[i]
 		i++
 		if c < 0x80 {
+			if n == 9 && c > 1 {
+				// 第 10 字节仅剩 1 个有效位，c>1 属溢出编码
+				return 0, 0
+			}
 			return x | uint64(c)<<s, n + 1
 		}
 		x |= uint64(c&0x7f) << s
