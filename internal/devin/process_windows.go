@@ -7,10 +7,18 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
+
+// hiddenProcAttr 隐藏子进程控制台窗口：GUI 程序无控制台，
+// 直接 exec 控制台程序（taskkill/tasklist/cmd）会闪现终端窗口。
+func hiddenProcAttr() *syscall.SysProcAttr {
+	return &syscall.SysProcAttr{HideWindow: true}
+}
 
 func stopDevinProcess() error {
 	cmd := exec.Command("taskkill", "/IM", "Devin.exe", "/T", "/F")
+	cmd.SysProcAttr = hiddenProcAttr()
 	if err := cmd.Run(); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 128 {
 			return nil
@@ -30,14 +38,20 @@ func startDevinProcess(installDir string) error {
 	}
 	for _, candidate := range candidates {
 		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
-			return exec.Command(candidate).Start()
+			cmd := exec.Command(candidate)
+			cmd.SysProcAttr = hiddenProcAttr()
+			return cmd.Start()
 		}
 	}
-	return exec.Command("cmd", "/c", "start", "", "Devin").Start()
+	cmd := exec.Command("cmd", "/c", "start", "", "Devin")
+	cmd.SysProcAttr = hiddenProcAttr()
+	return cmd.Start()
 }
 
 func isDevinProcessRunning() bool {
-	out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq Devin.exe", "/NH").Output()
+	cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq Devin.exe", "/NH")
+	cmd.SysProcAttr = hiddenProcAttr()
+	out, err := cmd.Output()
 	return err == nil && strings.Contains(strings.ToLower(string(out)), "devin.exe")
 }
 

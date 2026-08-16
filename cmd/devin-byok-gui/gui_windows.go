@@ -83,7 +83,9 @@ func guiCreateWindow(uiURL string) interface{} {
 	if w == nil {
 		logx.Errorf("webview2 init failed; dataPath=%s", dataPath)
 		messageBox(title, "无法初始化 WebView2 窗口。\n\n请安装 Microsoft Edge WebView2 Runtime 后重试。\n将尝试用系统浏览器打开管理页。", mbIconError)
-		_ = exec.Command("cmd", "/c", "start", "", uiURL).Start()
+		cmd := exec.Command("cmd", "/c", "start", "", uiURL)
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		_ = cmd.Start()
 		return nil
 	}
 	return w
@@ -186,7 +188,9 @@ func bringExistingToFront() {
 }
 
 func openBrowser(url string) {
-	_ = exec.Command("cmd", "/c", "start", "", url).Start()
+	cmd := exec.Command("cmd", "/c", "start", "", url)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	_ = cmd.Start()
 }
 
 func ensureSingleInstance() bool {
