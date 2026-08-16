@@ -670,15 +670,41 @@ function setFooterProgress(pct, text){
   if(tx) tx.textContent = (text || (p + '%'));
 }
 
+function setBrandSub(v){
+  const sub=document.querySelector('.brand .sub');
+  if(sub){ sub.textContent = t('footer.sub',{v:v}); }
+}
 function loadFooterVersion(){
   setFooterVersion(APP_VERSION);
+  setBrandSub(APP_VERSION);
   jget('/api/version').then(v=>{
     if(v && v.version){
       setFooterVersion(v.version);
-      const sub=document.querySelector('.brand .sub');
-      if(sub){ sub.textContent = t('footer.sub',{v:v.version}); }
+      setBrandSub(v.version);
     }
-  }).catch(()=>{ setFooterVersion(APP_VERSION); });
+  }).catch(()=>{ setFooterVersion(APP_VERSION); setBrandSub(APP_VERSION); });
+}
+
+// 按最近一次检查结果以当前语言重渲染页脚更新状态（语言切换时复用，保留 has-update 样式）
+function renderFooterUpdate(r){
+  if(!r) return;
+  const cur = (r.current) || APP_VERSION;
+  const latest = (r.latest) || cur;
+  if(!r.ok){
+    setFooterUpdate(r.message || t('state.updateCheckFailed'), false);
+    return;
+  }
+  if(r.update_available){
+    setFooterUpdate(t('state.newVersion',{v:latest}), true);
+    return;
+  }
+  // r.ok=true 且无更新：失败类消息由 r.ok 结构化分支处理；此处只排除"已最新"类，
+  // 其余服务端状态消息（如"已关闭在线更新"）原样展示，避免误吞为"已是最新"
+  if(r.message && !/最新|up to date|latest/i.test(r.message)){
+    setFooterUpdate(r.message, false);
+  }else{
+    setFooterUpdate(t('state.upToDateV',{v:latest}), false);
+  }
 }
 
 async function runUpdateCheck(opts){
@@ -692,22 +718,9 @@ async function runUpdateCheck(opts){
     const cur = (r && r.current) || APP_VERSION;
     const latest = (r && r.latest) || cur;
     setFooterVersion(cur);
-    if(!r || !r.ok){
-      setFooterUpdate((r && r.message) || t('state.updateCheckFailed'), false);
-      return r;
-    }
-    if(r.update_available){
-      setFooterUpdate(t('state.newVersion',{v:latest}), true);
-      if(opts.showModal !== false){
-        showUpdateModal(r, !!opts.force);
-      }
-    }else{
-      // 更新未启用 / 已最新 / 检查失败等：显示服务端原始 message，否则显示已最新
-      if(r.message && /关闭|未配置|失败|HTTP|error|disabled|not configured|fail/i.test(r.message) && !/最新|up to date|latest/i.test(r.message)){
-        setFooterUpdate(r.message, false);
-      }else{
-        setFooterUpdate(t('state.upToDateV',{v:latest}), false);
-      }
+    renderFooterUpdate(r);
+    if(r && r.ok && r.update_available && opts.showModal !== false){
+      showUpdateModal(r, !!opts.force);
     }
     return r;
   }catch(e){
@@ -986,5 +999,10 @@ setInterval(refreshMetrics, 2000);
 ['f_label','f_upstream'].forEach(id=>{ const el=document.getElementById(id); if(el){ el.addEventListener('input', refreshUidHint); }});
 // 语言切换后重刷动态渲染区域（静态 data-i18n 由 i18n.applyLang 处理）；
 // refreshAll 覆盖 metrics/status/config/localAccount 与 models 页，prompts 页单独刷新，
-// 页头品牌副标题（版本）由 loadFooterVersion 重新以新语言渲染。
-document.addEventListener('i18n:changed', () => { refreshAll(); if(currentPage==='prompts') refreshPrompts(); loadFooterVersion(); });
+// 品牌副标题（版本）与页脚更新状态以新语言重渲染。
+document.addEventListener('i18n:changed', () => {
+  refreshAll();
+  if(currentPage==='prompts') refreshPrompts();
+  loadFooterVersion();
+  renderFooterUpdate(__lastUpdateCheck);
+});
