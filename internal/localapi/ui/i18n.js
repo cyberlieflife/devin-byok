@@ -16,7 +16,6 @@
       'lang.toast.zh': '已切换为中文界面',
       'lang.toast.en': '已切换为英文界面',
       // ---- header / nav ----
-      'sub.title': '本地模型接入控制台',
       'nav.settings': '设置',
       'nav.monitor': '监控',
       'nav.models': '模型',
@@ -26,7 +25,6 @@
       'state.apiChecking': '管理端检测中',
       'state.extChecking': '检测中…',
       'state.versionLoading': '当前版本加载中…',
-      'state.waitingCheck': '等待检查…',
       'state.noData': '暂无数据',
       'state.notCreated': '未创建',
       // ---- service console ----
@@ -250,7 +248,7 @@
       'models.modal.uidHintDynamic': 'Family UID 将自动生成为：',
       'models.modal.copyTitle': '复制模型',
       'models.modal.editTitle': '编辑模型',
-      'models.modal.currentKey': '当前: ',
+      'models.modal.currentKey': '当前：',
       'prompts.empty': '暂无自定义提示词（固定内置工具提示仍会注入）',
       'prompts.untitled': '(无标题)',
       'prompts.confirmDelete': '删除该提示词？',
@@ -278,7 +276,6 @@
       'lang.toast.zh': 'Interface switched to Chinese',
       'lang.toast.en': 'Interface switched to English',
       // ---- header / nav ----
-      'sub.title': 'Local Model Access Console',
       'nav.settings': 'Settings',
       'nav.monitor': 'Monitor',
       'nav.models': 'Models',
@@ -288,7 +285,6 @@
       'state.apiChecking': 'Checking management endpoint',
       'state.extChecking': 'Checking…',
       'state.versionLoading': 'Loading current version…',
-      'state.waitingCheck': 'Waiting to check…',
       'state.noData': 'No data',
       'state.notCreated': 'Not created',
       // ---- service console ----

@@ -260,9 +260,9 @@ async function refreshFamilies(){
         </div>
         <div class="muted small">upstream: ${escapeHtml((f.variants&&f.variants[0]&&f.variants[0].upstream_model)||'-')}</div>
         <div class="row gap" style="margin-top:12px">
-          <button class="btn btn-secondary" type="button" data-fuid="${escapeHtml(f.uid)}">${t('btn.edit')}</button>
-          <button class="btn btn-secondary" type="button" data-fuid="${escapeHtml(f.uid)}">${t('btn.copy')}</button>
-          <button class="btn btn-danger" type="button" data-fuid="${escapeHtml(f.uid)}">${t('btn.delete')}</button>
+          <button class="btn btn-secondary" type="button" data-fuid="${escapeHtml(f.uid)}" data-act="edit">${t('btn.edit')}</button>
+          <button class="btn btn-secondary" type="button" data-fuid="${escapeHtml(f.uid)}" data-act="copy">${t('btn.copy')}</button>
+          <button class="btn btn-danger" type="button" data-fuid="${escapeHtml(f.uid)}" data-act="del">${t('btn.delete')}</button>
         </div>
       </div>`).join('');
     // 家族卡片按钮：data-* + addEventListener 绑定，避免属性内联 JS 的双上下文转义失效
@@ -297,14 +297,6 @@ function formPatch(){
 async function saveConfig(){
   try{ const res=await jsend('/api/config','PUT',formPatch()); toast(res.message||t('toast.saved')); await refreshAll(); }
   catch(e){ toast(t('toast.saveFailed')+': '+e.message) }
-}
-async function testUpstream(){
-  const el=document.getElementById('upResult'); el.textContent=t('state.testing');
-  try{
-    const res=await jsend('/api/test-upstream','POST');
-    el.textContent=res.ok?('OK '+ (res.text||'')):('FAIL '+(res.error||''));
-    toast(res.ok?t('state.upstreamOk'):(res.error||t('state.failed')));
-  }catch(e){ el.textContent=e.message; toast(e.message) }
 }
 async function control(action){
   const button=document.getElementById(action==='start'?'btnServiceStart':'btnServiceStop');
@@ -635,48 +627,6 @@ function hideToTray(){
   }
 }
 
-async function checkUpdate(){
-  const el=document.getElementById('updateResult');
-  if(el) el.textContent=t('state.checkingUpdate');
-  try{
-    const r = await jget('/api/update/check');
-    const msg = r.message || '';
-    let text = t('update.currentLatest',{cur:(r.current||'?'),latest:(r.latest||'?')})+' — '+msg;
-    if(r.release_url) text += ' · '+r.release_url;
-    if(el) el.textContent = text;
-    if(r.update_available){ toast(t('toast.updateFound',{v:(r.latest||'')})); }
-    else { toast(msg||t('toast.upToDate')); }
-    return r;
-  }catch(e){
-    if(el) el.textContent = e.message||String(e);
-    toast(e.message||String(e));
-  }
-}
-async function applyUpdate(){
-  if(!confirm(t('confirm.applyUpdate'))) return;
-  const el=document.getElementById('updateResult');
-  if(el) el.textContent=t('state.downloading');
-  try{
-    const r = await jsend('/api/update/apply','POST',{});
-    if(el) el.textContent = r.message||JSON.stringify(r);
-    toast(r.message||t('toast.updateScheduled'));
-  }catch(e){
-    if(el) el.textContent = e.message||String(e);
-    toast(e.message||String(e));
-  }
-}
-async function saveUpdatePrefs(){
-  const body = {
-    update_enabled: !!(document.getElementById('update_enabled')||{}).checked,
-    update_auto_apply: !!(document.getElementById('update_auto_apply')||{}).checked,
-    update_repo: ((document.getElementById('update_repo')||{}).value||'').trim(),
-  };
-  try{
-    await jsend('/api/config','PUT', body);
-    toast(t('toast.updateSettingsSaved'));
-  }catch(e){ toast(e.message||String(e)); }
-}
-
 
 // ===== 底栏更新状态 + 弹窗 + 进度 =====
 // 与 internal/version.Version 保持一致（硬编码兜底，避免接口未就绪显示 v?）
@@ -864,7 +814,7 @@ function startUpdateAutoCheck(){
   setFooterUpdate(t('state.manualCheckHint'), false);
 }
 
-// 覆盖旧的 checkUpdate / applyUpdate，复用底栏逻辑
+// checkUpdate / applyUpdate 复用底栏逻辑（runUpdateCheck / acceptUpdateAndDownload）
 async function checkUpdate(){
   const el=document.getElementById('updateResult');
   if(el) el.textContent=t('state.checkingUpdate');
@@ -1035,5 +985,6 @@ startUpdateAutoCheck();
 setInterval(refreshMetrics, 2000);
 ['f_label','f_upstream'].forEach(id=>{ const el=document.getElementById(id); if(el){ el.addEventListener('input', refreshUidHint); }});
 // 语言切换后重刷动态渲染区域（静态 data-i18n 由 i18n.applyLang 处理）；
-// refreshAll 覆盖 metrics/status/config/localAccount 与 models 页，prompts 页单独刷新。
-document.addEventListener('i18n:changed', () => { refreshAll(); if(currentPage==='prompts') refreshPrompts(); });
+// refreshAll 覆盖 metrics/status/config/localAccount 与 models 页，prompts 页单独刷新，
+// 页头品牌副标题（版本）由 loadFooterVersion 重新以新语言渲染。
+document.addEventListener('i18n:changed', () => { refreshAll(); if(currentPage==='prompts') refreshPrompts(); loadFooterVersion(); });
