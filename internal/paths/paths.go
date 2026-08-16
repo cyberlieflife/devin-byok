@@ -41,14 +41,23 @@ func CaptureDir() string {
 }
 
 // EnsureConfig ensures config.yaml exists.
-// Prefer existing file; migrate once from legacy locations; else write embedded template.
+// Prefer existing non-template file; migrate once from legacy locations when the
+// target is missing or still an untouched embedded template; else write template.
 func EnsureConfig() (string, error) {
 	if _, err := EnsureDir(); err != nil {
 		return "", err
 	}
 	dst := ConfigPath()
+	dstIsTemplate := false
 	if st, err := os.Stat(dst); err == nil && !st.IsDir() && st.Size() > 0 {
-		return dst, nil
+		if b, rerr := os.ReadFile(dst); rerr == nil && len(payload.ConfigExample) > 0 && string(b) == string(payload.ConfigExample) {
+			// 目标位置是未修改的内置模板：可能是升级时生成的示例，
+			// 下面仍尝试从历史位置迁移用户真实配置。
+			dstIsTemplate = true
+		} else {
+			// 已存在且非模板：用户配置，直接使用。
+			return dst, nil
+		}
 	}
 	for _, old := range legacyConfigCandidates() {
 		if old == "" || old == dst {
@@ -58,9 +67,16 @@ func EnsureConfig() (string, error) {
 		if err != nil || len(b) == 0 {
 			continue
 		}
+		// 跳过同样是内置模板的候选（避免把示例配置当用户配置迁移）。
+		if len(payload.ConfigExample) > 0 && string(b) == string(payload.ConfigExample) {
+			continue
+		}
 		if err := os.WriteFile(dst, b, 0o644); err == nil {
 			return dst, nil
 		}
+	}
+	if dstIsTemplate {
+		return dst, nil
 	}
 	if len(payload.ConfigExample) == 0 {
 		return "", os.ErrNotExist
