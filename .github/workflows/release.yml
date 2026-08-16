@@ -18,9 +18,9 @@ jobs:
         arch: [amd64, arm64]
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.24.x"
           cache: true
@@ -32,7 +32,7 @@ jobs:
         run: ./scripts/pack-release.ps1 -Version $($env:GITHUB_REF_NAME -replace '^v','')
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: windows-${{ matrix.arch }}-release
           path: dist/devin-byok-*-windows-${{ matrix.arch }}.exe*
@@ -52,9 +52,9 @@ jobs:
             runner: macos-14
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.24.x"
           cache: true
@@ -78,11 +78,11 @@ jobs:
     steps:
       # checkout 提供 git 上下文：gh release create --generate-notes 需要
       # 仓库历史生成变更说明，没有 .git 会直接失败。
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: dist-artifacts
           merge-multiple: true
