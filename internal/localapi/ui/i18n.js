@@ -585,7 +585,9 @@
     if (typeof window.toast === 'function') window.toast(msg);
   }
 
-  // 暴露为全局 I18N（app.js 在 body 末尾执行，此处 head 加载，无竞态）
+  // 暴露为全局 I18N（app.js 在 body 末尾执行，此处 head 加载，无竞态）；
+  // 同时暴露全局 t()：app.js 大量直接调用 t('key')，若仅挂在 I18N 上会在
+  // 首次调用时抛 ReferenceError，导致 app.js 顶层中断、整个界面功能失效。
   window.I18N = {
     currentLang: currentLang,
     t: t,
@@ -593,6 +595,7 @@
     setLang: setLang,
     toggleLang: toggleLang
   };
+  window.t = t;
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', applyLang);
