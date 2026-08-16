@@ -360,12 +360,14 @@
 <div id="toast"></div>
 <script src="/ui/app.js?v=1.4.0"></script>
 
-<!-- 底边栏：版本 + 更新状态 + 下载进度 -->
+<!-- 底边栏：版本 + 更新状态 + 下载进度 + 赞赏支持 -->
 <footer class="app-footer" id="appFooter">
   <div class="footer-left">
     <span id="footerVersion">v1.0.0</span>
     <span class="footer-sep">·</span>
     <span id="footerUpdate" data-i18n-js>等待检查…</span>
+    <span class="footer-sep">·</span>
+    <button class="btn btn-secondary btn-compact" id="btnSupport" onclick="openSupportModal()" data-i18n="btn.support">赞赏支持</button>
   </div>
   <div class="footer-right">
     <div class="footer-progress" id="footerProgressWrap" hidden>
@@ -374,6 +376,18 @@
     </div>
   </div>
 </footer>
+
+<!-- 赞赏支持弹窗 -->
+<div class="modal-mask" id="supportModal" hidden>
+  <div class="modal card support-modal">
+    <div class="card-h" data-i18n="support.title">赞赏支持</div>
+    <p class="muted small" data-i18n="support.body">如果觉得项目好可以赞赏我支持一下谢谢喵</p>
+    <img src="/ui/support.jpg?v=1.4.0" alt="Support" style="max-width:280px;width:100%;border-radius:10px;margin-top:6px"/>
+    <div class="row gap" style="margin-top:14px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="closeSupportModal()" data-i18n="btn.cancel">取消</button>
+    </div>
+  </div>
+</div>
 
 <!-- 强制更新弹窗 -->
 <div class="modal-mask" id="updateModal" hidden>

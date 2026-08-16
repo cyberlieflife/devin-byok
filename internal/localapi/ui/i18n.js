@@ -142,6 +142,10 @@
       'update.modal.title': '发现新版本',
       'btn.later': '稍后',
       'btn.updateNow': '立即更新',
+      // ---- support ----
+      'btn.support': '赞赏支持',
+      'support.title': '赞赏支持',
+      'support.body': '如果觉得项目好可以赞赏我支持一下谢谢喵',
       // ---- js dynamic ----
       'monitor.waitingLogs': '等待日志…',
       'state.apiOffline': 'API 离线',
@@ -402,6 +406,10 @@
       'update.modal.title': 'New Version Available',
       'btn.later': 'Later',
       'btn.updateNow': 'Update Now',
+      // ---- support ----
+      'btn.support': 'Support',
+      'support.title': 'Support',
+      'support.body': 'If you like this project, a small tip would be greatly appreciated. Thanks!',
       // ---- js dynamic ----
       'monitor.waitingLogs': 'Waiting for logs…',
       'state.apiOffline': 'API offline',

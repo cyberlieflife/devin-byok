@@ -752,6 +752,16 @@ function dismissUpdateModal(){
   __updateModalForced = false;
 }
 
+// 赞赏支持弹窗（v1.3.0 重写 UI 时被移除，现恢复）
+function openSupportModal(){
+  const modal = document.getElementById('supportModal');
+  if(modal) modal.hidden = false;
+}
+function closeSupportModal(){
+  const modal = document.getElementById('supportModal');
+  if(modal) modal.hidden = true;
+}
+
 async function acceptUpdateAndDownload(){
   dismissUpdateModal();
   __updateDownloadActive = true;
