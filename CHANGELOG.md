@@ -2,6 +2,28 @@
 
 本文件记录 devin-byok 的主要版本变更。
 
+## [v1.3.2] - 2026-08-16
+
+### 安全与隐私
+
+- RPC 抓包改为显式开关 `capture.enabled`，默认关闭（不再无条件落盘完整请求体）。
+- 开启抓包时：文件权限收紧为 0600、记录脱敏（authorization / Bearer / api_key / sk-*）、启动时输出警告。
+- 修复 protobuf 解析对超大长度 varint 的整数溢出，避免畸形/恶意请求触发 panic（DoS）。
+
+### 工程与测试
+
+- CI 增加 `go build ./...` 完整构建门禁、`-race` 竞态检测与 `go mod tidy` 一致性校验。
+- 新增 pbwire 金标/fuzz 测试、ideinject 注入/幂等/恢复测试、扩展资源一致性断言。
+- 移除开发期抓包脚本与硬编码本机路径的测试；机器相关抓包测试用 `manual` 构建标签隔离。
+- 抓包逻辑从 `server.go` 抽离到 `capture.go`；修正 README 引用与 START.txt 编码。
+
+### 平台支持
+
+- Windows（官方发布物，.exe，amd64/arm64）
+- macOS（官方发布物，.dmg，arm64/amd64）
+- Linux（开发/CI 辅助支持，源码构建）
+
+
 ## [v1.3.1] - 2026-08-15
 
 ### 新增
