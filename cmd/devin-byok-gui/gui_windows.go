@@ -6,12 +6,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
 
 	"devin-byok/internal/desktop"
 	"devin-byok/internal/logx"
+	"devin-byok/internal/version"
 
 	"github.com/jchv/go-webview2"
 )
@@ -38,11 +40,29 @@ const (
 
 func guiInit() bool {
 	hideConsole()
+	cleanWebView2CacheOnUpgrade()
 	if !ensureSingleInstance() {
 		bringExistingToFront()
 		return false
 	}
 	return true
+}
+
+// cleanWebView2CacheOnUpgrade 在版本升级后清空 WebView2 持久缓存：
+// WebView2 数据目录跨版本复用，可能缓存旧版 index.html/app.js 等静态资源，
+// 导致界面停留在旧版（版本号/按钮/模型列表异常）。用 webview2.version 标记
+// 记录最近一次清理时的版本，不一致即清空缓存目录，保证升级后全新加载。
+func cleanWebView2CacheOnUpgrade() {
+	base := filepath.Join(os.Getenv("APPDATA"), "devin-byok")
+	dataPath := filepath.Join(base, "webview2")
+	verFile := filepath.Join(base, "webview2.version")
+	cur := version.Version
+	if b, err := os.ReadFile(verFile); err == nil && strings.TrimSpace(string(b)) == cur {
+		return // 版本一致：无需清理
+	}
+	_ = os.RemoveAll(dataPath)
+	_ = os.MkdirAll(dataPath, 0o755)
+	_ = os.WriteFile(verFile, []byte(cur), 0o644)
 }
 
 func guiCreateWindow(uiURL string) interface{} {
