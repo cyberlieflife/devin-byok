@@ -99,11 +99,12 @@ jobs:
             ASSETS+=("$f")
           done
           echo "Releasing ${TAG} with ${#ASSETS[@]} assets"
-          # 优先使用 CHANGELOG.md 中当前版本的条目作为 release notes：
-          # 从 "## [vX.Y.Z]" 提取到下一个 "## [v" 版本标题之前（含标题行）。
+          # Release notes = CHANGELOG.md 当前版本条目（前置）+ GitHub 自动生成
+          # 的 commit 变更列表（追加）。gh 会将 --notes 内容前置到自动生成
+          # notes 之前；CHANGELOG 缺条目时仅用自动生成。
           BODY=$(awk -v tag="## [v${VER}]" 'index($0, tag)==1 {f=1} f && index($0, tag)!=1 && /^## \[v/ {exit} f' CHANGELOG.md)
           if [ -n "$BODY" ]; then
-            gh release create "${TAG}" "${ASSETS[@]}" --title "${TAG}" --notes "$BODY"
+            gh release create "${TAG}" "${ASSETS[@]}" --title "${TAG}" --notes "$BODY" --generate-notes
           else
             # CHANGELOG 缺条目时回退到自动生成
             gh release create "${TAG}" "${ASSETS[@]}" --title "${TAG}" --generate-notes
