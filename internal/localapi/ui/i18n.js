@@ -121,6 +121,7 @@
       'settings.update.sub': '从 GitHub Releases 检查新版本。自动更新会下载 zip、校验 SHA256（若有）并替换 exe 后重启。',
       'settings.update.enabled': '启用在线检查',
       'settings.update.autoApply': '检查到更新后自动应用（谨慎）',
+      'settings.update.repoLabel': 'GitHub 仓库 owner/name',
       'btn.checkUpdate': '检查更新',
       'btn.applyUpdate': '下载并更新',
       // ---- family modal ----
@@ -245,7 +246,7 @@
       'models.empty': '还没有模型，点击右上角添加',
       'models.defaultOption': '（默认模型）',
       'models.configuredMissing': '（已配置，列表中不存在）',
-      'models.featureBind.activeShort': '生效: ',
+      'models.featureBind.activeShort': '生效：',
       'models.modal.uidHintDynamic': 'Family UID 将自动生成为：',
       'models.modal.copyTitle': '复制模型',
       'models.modal.editTitle': '编辑模型',
@@ -382,6 +383,7 @@
       'settings.update.sub': 'Check for new versions from GitHub Releases. Auto-update downloads a zip, verifies SHA256 (if present), replaces the exe and restarts.',
       'settings.update.enabled': 'Enable online check',
       'settings.update.autoApply': 'Auto-apply updates when found (careful)',
+      'settings.update.repoLabel': 'GitHub repo owner/name',
       'btn.checkUpdate': 'Check Update',
       'btn.applyUpdate': 'Download & Update',
       // ---- family modal ----
@@ -569,11 +571,6 @@
     document.querySelectorAll('[data-i18n-title]').forEach(function (el) {
       el.setAttribute('title', t(el.getAttribute('data-i18n-title')));
     });
-    var btn = document.getElementById('btnLang');
-    if (btn) {
-      btn.textContent = t('lang.label');
-      btn.setAttribute('title', t('lang.title'));
-    }
     document.dispatchEvent(new CustomEvent('i18n:changed', { detail: { lang: lang } }));
   }
 

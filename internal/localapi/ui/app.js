@@ -635,32 +635,6 @@ function hideToTray(){
   }
 }
 
-
-async function refreshUpdatePrefs(){
-  try{
-    const c = await jget('/api/config');
-    // version
-    try{
-      const v = await jget('/api/version');
-      const el = document.getElementById('updateStatus');
-      if(el) el.textContent = t('update.currentVersion',{v:(v.version||'?')})+(v.build_time?(' · build '+v.build_time):'');
-    }catch(_e){}
-    // update fields may come from dedicated endpoint later; use /api/status not enough
-  }catch(_e){}
-  try{
-    // load from a lightweight check that includes config: embed in desktop or version
-    const st = await jget('/api/update/check');
-    // if disabled, still show
-    const en = document.getElementById('update_enabled');
-    // fetch config raw - extend handleAPIConfig later; for now read check message
-  }catch(_e){}
-}
-async function loadUpdateConfig(){
-  try{
-    const c = await jget('/api/config');
-    // fields added below in config get
-  }catch(_e){}
-}
 async function checkUpdate(){
   const el=document.getElementById('updateResult');
   if(el) el.textContent=t('state.checkingUpdate');
@@ -1060,5 +1034,6 @@ refreshAll();
 startUpdateAutoCheck();
 setInterval(refreshMetrics, 2000);
 ['f_label','f_upstream'].forEach(id=>{ const el=document.getElementById(id); if(el){ el.addEventListener('input', refreshUidHint); }});
-// 语言切换后重刷动态渲染区域（静态 data-i18n 由 i18n.applyLang 处理）
-document.addEventListener('i18n:changed', () => refreshAll());
+// 语言切换后重刷动态渲染区域（静态 data-i18n 由 i18n.applyLang 处理）；
+// refreshAll 覆盖 metrics/status/config/localAccount 与 models 页，prompts 页单独刷新。
+document.addEventListener('i18n:changed', () => { refreshAll(); if(currentPage==='prompts') refreshPrompts(); });
