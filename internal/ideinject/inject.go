@@ -30,8 +30,11 @@ func sessionsDir(installDir string) string {
 	return filepath.Dir(platform.SessionsHTMLPath(installDir))
 }
 
+// dataDir 返回元数据目录；测试中可覆盖以隔离真实用户目录。
+var dataDir = platform.DataDir
+
 func metaPath() string {
-	return filepath.Join(platform.DataDir(), metaFileName)
+	return filepath.Join(dataDir(), metaFileName)
 }
 
 // ApplyContextUsageDonut 向 Devin sessions.html 注入悬停四色环脚本。
@@ -152,7 +155,7 @@ type injectMeta struct {
 }
 
 func writeMeta(installDir, htmlPath, jsPath string, fresh bool) error {
-	dir := platform.DataDir()
+	dir := dataDir()
 	_ = os.MkdirAll(dir, 0o755)
 	b := []byte(fmt.Sprintf(
 		"{\n  \"install_dir\": %q,\n  \"html_path\": %q,\n  \"js_path\": %q,\n  \"applied_at\": %q,\n  \"fresh_html_inject\": %v\n}\n",
