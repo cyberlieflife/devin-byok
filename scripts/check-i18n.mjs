@@ -75,7 +75,8 @@ for (const k of Object.keys(zh)) {
           i18nHtml: /data-i18n-html=/.test(attrs),
           text: '',
         });
-        if (selfClose) stack.pop();
+        // void 元素（无结束标签）与自闭合标签：push 后立即出栈，避免后续 </div> 误 pop 造成栈错位
+        if (selfClose || /^(?:input|br|hr|img|meta|link|area|base|col|embed|source|track|wbr)$/i.test(tag)) stack.pop();
       }
     } else if (stack.length) {
       stack[stack.length - 1].text += mm[0];

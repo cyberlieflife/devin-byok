@@ -28,7 +28,17 @@ function makeStorage() {
   };
 }
 
-function makeDocument() {
+function makeElement(attrs) {
+  return {
+    attrs: Object.assign({}, attrs),
+    textContent: '',
+    innerHTML: '',
+    setAttribute(k, v) { this.attrs[k] = String(v); },
+    getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
+  };
+}
+
+function makeDocument(elements) {
   const listeners = {};
   return {
     documentElement: {
@@ -38,15 +48,15 @@ function makeDocument() {
     readyState: 'complete',
     addEventListener(ev, fn) { (listeners[ev] = listeners[ev] || []).push(fn); },
     dispatchEvent(ev) { (listeners[ev.type] || []).forEach(fn => fn(ev)); },
-    querySelectorAll() { return []; },
+    querySelectorAll(sel) { return (elements && elements[sel]) || []; },
     getElementById() { return null; },
     _listeners: listeners,
   };
 }
 
-function boot() {
+function boot(elements) {
   const sandbox = { navigator: { language: 'en-US' }, localStorage: makeStorage(), CustomEvent: CustomEventMock };
-  sandbox.document = makeDocument();
+  sandbox.document = makeDocument(elements);
   sandbox.window = sandbox; // i18n.js 以 window.I18N 暴露 API，window.toast 可选
   let toastCalls = [];
   sandbox.toast = (m) => toastCalls.push(m);
@@ -104,6 +114,33 @@ console.log('setLang 链路:');
   b.I18N.setLang('fr');
   assertEq(changed, 2, '非法语言不派发事件');
   assertEq(b.sandbox.localStorage.getItem('devin-byok.lang'), 'zh', '非法语言不写入');
+}
+
+// —— applyLang 的 DOM 应用路径（textContent/innerHTML/placeholder/title）——
+console.log('applyLang DOM 应用路径:');
+{
+  const els = {
+    '[data-i18n]': [makeElement({ 'data-i18n': 'btn.start' })],
+    '[data-i18n-html]': [makeElement({ 'data-i18n-html': 'settings.notes.body' })],
+    '[data-i18n-placeholder]': [makeElement({ 'data-i18n-placeholder': 'settings.update.repoLabel' })],
+    '[data-i18n-title]': [makeElement({ 'data-i18n-title': 'lang.title' })],
+  };
+  const b = boot(els);
+  b.sandbox.navigator.language = 'en-US';
+  b.I18N.applyLang();
+  assertEq(els['[data-i18n]'][0].textContent, 'Enable & Import', 'data-i18n textContent 应用');
+  assertEq(els['[data-i18n-html]'][0].innerHTML,
+    'Providers (Base URL / API Key / upstream model) are configured in <b>Models → Family cards</b>, consistent with cursor-byok: multiple models, each with its own provider.',
+    'data-i18n-html innerHTML 应用');
+  assertEq(els['[data-i18n-placeholder]'][0].attrs['placeholder'], 'GitHub repo owner/name', 'data-i18n-placeholder 应用');
+  assertEq(els['[data-i18n-title]'][0].attrs['title'], 'Switch interface language (current: English)', 'data-i18n-title 应用');
+  assertEq(b.sandbox.document.documentElement.lang, 'en', 'documentElement.lang 更新');
+  // 切回中文
+  b.I18N.applyLang(); // 语言仍 en（localStorage 未设置）
+  b.sandbox.navigator.language = 'zh-CN';
+  b.I18N.applyLang();
+  assertEq(els['[data-i18n]'][0].textContent, '启用并一键导入', '切回 zh 后文本重应用');
+  assertEq(b.sandbox.document.documentElement.lang, 'zh-CN', '切回 zh 后 lang 更新');
 }
 
 // —— t() 占位符与缺失回退 ——

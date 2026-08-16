@@ -2,6 +2,7 @@ package localapi
 
 import (
 	"net/http/httptest"
+	"regexp"
 	"testing"
 )
 
@@ -19,6 +20,9 @@ func TestUIMessagesBilingual(t *testing.T) {
 		}
 		if langs["zh"] == langs["en"] {
 			t.Errorf("key %q: zh equals en (%q), likely untranslated", key, langs["zh"])
+		}
+		if regexp.MustCompile(`[\p{Han}]`).MatchString(langs["en"]) {
+			t.Errorf("key %q: en translation contains Chinese characters: %q", key, langs["en"])
 		}
 	}
 }
