@@ -1,9 +1,9 @@
 
 let currentPage = 'monitor';
 
-async function jget(url){const r=await fetch(url); if(!r.ok) throw new Error(await r.text()); return r.json()}
+async function jget(url){const r=await fetch(url,{headers:{'X-Lang':I18N.currentLang()}}); if(!r.ok) throw new Error(await r.text()); return r.json()}
 async function jsend(url, method, body){
-  const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+  const r=await fetch(url,{method,headers:{'Content-Type':'application/json','X-Lang':I18N.currentLang()},body:body?JSON.stringify(body):undefined});
   const t=await r.text(); let data; try{data=JSON.parse(t)}catch{data={raw:t}}
   if(!r.ok) throw new Error(data.error||data.message||t||r.statusText);
   return data;

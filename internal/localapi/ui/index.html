@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Devin BYOK</title>
 <link rel="stylesheet" href="/ui/app.css"/>
+<script src="/ui/i18n.js"></script>
 </head>
 <body>
 <div class="app has-footer">
@@ -22,6 +23,7 @@
       <button class="btn btn-secondary btn-nav active" data-page="monitor" onclick="showPage('monitor')">监控</button>
       <button class="btn btn-secondary btn-nav" data-page="models" onclick="showPage('models')">模型</button>
       <button class="btn btn-secondary btn-nav" data-page="prompts" onclick="showPage('prompts')">提示词</button>
+      <button class="btn btn-secondary btn-nav lang-toggle" id="btnLang" data-i18n="lang.label" data-i18n-title="lang.title" onclick="I18N.toggleLang()">中</button>
     </div>
   </header>
 
