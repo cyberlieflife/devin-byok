@@ -53,6 +53,32 @@ func TestOriginGuardRejectsCrossSiteRequests(t *testing.T) {
 		t.Fatalf("cross-site Referer: status = %d, want 403", rr.Code)
 	}
 
+	// 同源 Referer 是完整 URL（浏览器同源请求带路径）：必须放行
+	// （此前按精确字符串比较，路径导致所有带 Referer 的同源请求被误拒）
+	for _, ref := range []string{
+		"http://127.0.0.1:8787/ui/",
+		"http://127.0.0.1:8787/ui/index.html",
+		"http://localhost:8787/ui/",
+		"http://127.0.0.1:8787/ui/index.html?x=1",
+	} {
+		req = httptest.NewRequest(http.MethodGet, "/api/prompts/preview", nil)
+		req.Header.Set("Referer", ref)
+		rr = httptest.NewRecorder()
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code == http.StatusForbidden {
+			t.Fatalf("same-origin Referer %q was rejected (forbidden origin)", ref)
+		}
+	}
+	// 同源 Origin + 带路径 Referer 组合（浏览器实际形态）同样放行
+	req = httptest.NewRequest(http.MethodPost, "/api/prompts/preview", nil)
+	req.Header.Set("Origin", "http://127.0.0.1:8787")
+	req.Header.Set("Referer", "http://127.0.0.1:8787/ui/")
+	rr = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code == http.StatusForbidden {
+		t.Fatal("same-origin Origin+Referer combination was rejected")
+	}
+
 	// 非 /api/ 路径（如 /healthz、/v1/chat/completions）不拦截，
 	// Devin 客户端可正常访问
 	req = httptest.NewRequest(http.MethodGet, "/healthz", nil)

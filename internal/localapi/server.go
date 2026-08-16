@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -179,6 +180,9 @@ func (s *Server) Handler() http.Handler {
 // originAllowed 校验管理 API 请求的浏览器来源。有 Origin 或 Referer
 // 时二者 host 均须与本地服务一致（127.0.0.1 / localhost 同端口），
 // 防止任意网页借浏览器跨站请求驱动本地状态变更（CSRF/DNS rebinding）。
+// 注意：Referer 是同源请求携带的完整 URL（含路径，如
+// http://127.0.0.1:8787/ui/index.html），因此比较前统一解析为
+// scheme://host（忽略路径/查询），避免把合法同源请求误判为跨站。
 func (s *Server) originAllowed(r *http.Request) bool {
 	cfg := s.GetConfig()
 	allowed := []string{
@@ -192,6 +196,10 @@ func (s *Server) originAllowed(r *http.Request) bool {
 		value = strings.TrimSpace(value)
 		if value == "" {
 			return true // 无浏览器来源头（本地 CLI/LS），放行
+		}
+		if u, err := url.Parse(value); err == nil && u.Host != "" {
+			// Referer 可能是完整 URL（含路径/查询），只比较 scheme://host
+			value = u.Scheme + "://" + u.Host
 		}
 		for _, a := range allowed {
 			if strings.EqualFold(value, a) {
