@@ -12,6 +12,7 @@ dist/
 *.exe~
 *.vsix
 *.zip
+*.dmg
 *.sha256
 
 # built binaries (root)
