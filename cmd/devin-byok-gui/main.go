@@ -218,8 +218,10 @@ func startEmbedded() error {
 	if err != nil {
 		return err
 	}
-	captureDir := paths.CaptureDir()
-	_ = os.MkdirAll(captureDir, 0o755)
+	captureDir := ""
+	if cfg.Capture.Enabled {
+		captureDir = paths.CaptureDir()
+	}
 	srv := localapi.New(cfg, captureDir)
 	abs, _ := filepath.Abs(cfgPath)
 	srv.SetConfigPath(abs)

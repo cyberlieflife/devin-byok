@@ -35,6 +35,7 @@ type Server struct {
 	rpcMu           sync.Mutex
 	rpcLog          string
 	bodyDir         string
+	captureOn       bool
 	stopWatch       chan struct{}
 	rpcRotator      *logx.RotatingWriter
 	restartRequired atomic.Bool
@@ -45,20 +46,21 @@ const officialAPIBase = "https://server.codeium.com"
 func boolPtr(v bool) *bool { return &v }
 
 func New(cfg *config.File, captureDir string) *Server {
-	if captureDir == "" {
-		captureDir = "work/capture"
+	s := &Server{
+		cfg:       cfg,
+		upstream:  openai.New(cfg.Upstream),
+		stopWatch: make(chan struct{}),
 	}
-	_ = os.MkdirAll(captureDir, 0o755)
-	bodyDir := filepath.Join(captureDir, "bodies")
-	_ = os.MkdirAll(bodyDir, 0o755)
-	return &Server{
-		cfg:        cfg,
-		upstream:   openai.New(cfg.Upstream),
-		rpcLog:     filepath.Join(captureDir, "localapi-rpc.jsonl"),
-		bodyDir:    bodyDir,
-		stopWatch:  make(chan struct{}),
-		rpcRotator: logx.NewRotatingWriter(filepath.Join(captureDir, "localapi-rpc.jsonl"), 32<<20, 3),
+	if cfg != nil && cfg.Capture.Enabled && captureDir != "" {
+		s.captureOn = true
+		_ = os.MkdirAll(captureDir, 0o755)
+		bodyDir := filepath.Join(captureDir, "bodies")
+		_ = os.MkdirAll(bodyDir, 0o755)
+		s.rpcLog = filepath.Join(captureDir, "localapi-rpc.jsonl")
+		s.bodyDir = bodyDir
+		s.rpcRotator = logx.NewRotatingWriter(s.rpcLog, 32<<20, 3)
 	}
+	return s
 }
 
 // Close 释放 Server 占用的底侧资源与句柄。
@@ -324,23 +326,25 @@ func (s *Server) serveRPC(w http.ResponseWriter, r *http.Request) {
 	ctype := r.Header.Get("Content-Type")
 	body := maybeGunzip(raw)
 
-	// 落盘完整请求体，便于继续逆向
-	s.dumpBody(method, raw)
+	// 仅在显式开启时落盘完整请求体（默认关闭，避免泄露上下文）
+	if s.captureOn {
+		s.dumpBody(method, raw)
 
-	rec := map[string]any{
-		"ts":        time.Now().Format(time.RFC3339Nano),
-		"method":    r.Method,
-		"path":      path,
-		"rpc":       method,
-		"ctype":     ctype,
-		"connect":   r.Header.Get("Connect-Protocol-Version"),
-		"encoding":  r.Header.Get("Content-Encoding"),
-		"body_len":  len(raw),
-		"plain_len": len(body),
-		"body_b64":  truncateB64(raw, 2048),
-		"strings":   extractStrings(body, 12),
+		rec := map[string]any{
+			"ts":        time.Now().Format(time.RFC3339Nano),
+			"method":    r.Method,
+			"path":      path,
+			"rpc":       method,
+			"ctype":     ctype,
+			"connect":   r.Header.Get("Connect-Protocol-Version"),
+			"encoding":  r.Header.Get("Content-Encoding"),
+			"body_len":  len(raw),
+			"plain_len": len(body),
+			"body_b64":  truncateB64(raw, 2048),
+			"strings":   extractStrings(body, 12),
+		}
+		s.appendRPC(rec)
 	}
-	s.appendRPC(rec)
 	logx.Infof("RPC %s plain=%d ctype=%s", method, len(body), ctype)
 	cfg := s.GetConfig()
 
@@ -1403,7 +1407,7 @@ func (s *Server) writeConnectError(w http.ResponseWriter, msg string) {
 }
 
 func (s *Server) dumpBody(method string, raw []byte) {
-	if len(raw) == 0 {
+	if !s.captureOn || s.bodyDir == "" || len(raw) == 0 {
 		return
 	}
 	name := fmt.Sprintf("%s_%d.bin", sanitize(method), time.Now().UnixNano())
@@ -1411,6 +1415,9 @@ func (s *Server) dumpBody(method string, raw []byte) {
 }
 
 func (s *Server) appendRPC(rec map[string]any) {
+	if !s.captureOn {
+		return
+	}
 	s.rpcMu.Lock()
 	defer s.rpcMu.Unlock()
 	b, err := json.Marshal(rec)

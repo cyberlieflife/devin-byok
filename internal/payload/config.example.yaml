@@ -111,6 +111,10 @@ cache:
   max_entries: 128
   # prompt_cache_key: ""   # 空则自动: devin-byok|<conv>|<upstream_model>
   include_cache_write_in_hit_rate: false
+# 调试抓包：把本地 RPC 请求落盘到 ~/.devin-byok/work/capture（默认关闭，勿在共享机器开启）
+capture:
+  enabled: false
+
 update:
   enabled: true
   repo: cyberlieflife/devin-byok

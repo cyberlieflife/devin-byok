@@ -20,6 +20,12 @@ type File struct {
 	Tools    ToolsConfig    `yaml:"tools"`
 	Cache    CacheConfig    `yaml:"cache"`
 	Quality  QualityConfig  `yaml:"quality" json:"quality"`
+	Capture  CaptureConfig  `yaml:"capture" json:"capture"`
+}
+
+// CaptureConfig 控制是否把本地 RPC 请求落盘（默认关闭，仅调试用）。
+type CaptureConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
 type ServerConfig struct {

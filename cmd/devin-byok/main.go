@@ -136,7 +136,10 @@ func mustServe(cfgPath string) {
 		logx.Errorf("load config: %v", err)
 		os.Exit(1)
 	}
-	captureDir := paths.CaptureDir()
+	captureDir := ""
+	if cfg.Capture.Enabled {
+		captureDir = paths.CaptureDir()
+	}
 	srv := localapi.New(cfg, captureDir)
 	abs, _ := filepath.Abs(cfgPath)
 	srv.SetConfigPath(abs)
@@ -157,7 +160,9 @@ func mustServe(cfgPath string) {
 	logx.Infof("pure_local=%v stream=%v cascade_tools=%v deepwiki=%v codemap=%v model=%s models=%d",
 		cfg.Features.PureLocal, cfg.Features.EnableStream, cfg.Features.EnableCascadeTools, cfg.Features.EnableDeepWiki, cfg.Features.EnableCodeMap,
 		cfg.DefaultModelID(), len(cfg.ModelList()))
-	logx.Infof("rpc log: %s", filepath.Join(captureDir, "localapi-rpc.jsonl"))
+	if cfg.Capture.Enabled {
+		logx.Infof("rpc log: %s", filepath.Join(captureDir, "localapi-rpc.jsonl"))
+	}
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
 		logx.Errorf("serve: %v", err)
 		os.Exit(1)
