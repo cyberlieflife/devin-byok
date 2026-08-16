@@ -85,6 +85,8 @@ update:
 | 模型 | Family 卡片；DeepWiki / CodeMap Fast·Smart 绑定 |
 | 设置 | 工具/流式/pure_local、托盘自启、在线更新 |
 
+GUI 界面支持中文与英文：默认跟随系统语言，页面右上角「中 / EN」按钮可随时切换（选择会保存到浏览器本地）。
+
 ## 开发者
 
 ### Windows
