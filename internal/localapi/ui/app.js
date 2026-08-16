@@ -59,13 +59,13 @@ function drawPie(hit, miss){
 function renderFeatureRank(list){
   const el=document.getElementById('featureModelRank');
   if(!el) return;
-  if(!list||!list.length){el.innerHTML='<div class="muted">暂无数据</div>';return;}
+  if(!list||!list.length){el.innerHTML='<div class="muted">'+t('state.noData')+'</div>';return;}
   const max=Math.max(...list.map(x=>x.count||0),1);
   el.innerHTML=list.slice(0,12).map((x,i)=>`<div class="rank-item"><span class="rank-n">${i+1}</span><span class="mono">${escapeHtml(x.model||'')}</span><div class="rank-bar"><i style="width:${Math.round((x.count||0)*100/max)}%"></i></div><span>${x.count||0}</span></div>`).join('');
 }
 function renderRank(list){
   const el=document.getElementById('modelRank');
-  if(!list||!list.length){el.innerHTML='<div class="muted">暂无数据</div>'; return}
+  if(!list||!list.length){el.innerHTML='<div class="muted">'+t('state.noData')+'</div>'; return}
   const max=Math.max(...list.map(x=>x.count||0),1);
   el.innerHTML=list.slice(0,8).map((x,i)=>`
     <div class="rank-item">
@@ -82,7 +82,7 @@ function renderRank(list){
 function renderLogs(logs){
   const box=document.getElementById('logBox');
   if(!box) return;
-  if(!logs||!logs.length){box.innerHTML='<div class="muted">等待日志…</div>'; return}
+  if(!logs||!logs.length){box.innerHTML='<div class="muted">'+t('monitor.waitingLogs')+'</div>'; return}
   // 命令行风格：正序展示，新日志在底部；取最后 120 条
   const arr = logs.length>120 ? logs.slice(logs.length-120) : logs;
   const atBottom = (box.scrollTop + box.clientHeight) >= (box.scrollHeight - 24);
@@ -99,7 +99,7 @@ function renderLogs(logs){
 
 async function refreshMetrics(){
   try{
-    if(typeof window.nativeOnline==='function' && !(await window.nativeOnline())){ setDot(false,'API 离线'); return }
+    if(typeof window.nativeOnline==='function' && !(await window.nativeOnline())){ setDot(false,t('state.apiOffline')); return }
     const m=await jget('/api/metrics');
     document.getElementById('mOk').textContent=m.req_ok??0;
     document.getElementById('mFail').textContent=m.req_fail??0;
@@ -122,19 +122,19 @@ async function refreshMetrics(){
     renderRank(m.model_rank||[]);
     renderLogs(m.logs||[]);
     document.getElementById('uptime').textContent='uptime '+fmtDur(m.uptime_sec||0);
-    setDot(true,'API 在线');
+    setDot(true,t('state.apiOnline'));
   }catch(e){
-    setDot(false,'API 离线');
+    setDot(false,t('state.apiOffline'));
   }
 }
 async function refreshStatus(){
   try{
     const s=await jget('/api/status');
-    setDot(true,'管理端在线');
+    setDot(true,t('state.apiConsoleOnline'));
     renderServiceStatus(s);
     const cfgPath=document.getElementById('cfgPath');
     if(cfgPath) cfgPath.textContent='config: '+(s.config_path||'-');
-  }catch(e){ setDot(false,'API 离线') }
+  }catch(e){ setDot(false,t('state.apiOffline')) }
 }
 function renderServiceStatus(s){
   const active=!!s.service_active;
@@ -144,20 +144,20 @@ function renderServiceStatus(s){
   const start=document.getElementById('btnServiceStart');
   const stop=document.getElementById('btnServiceStop');
   if(indicator) indicator.className='service-indicator '+(active?'active':'stopped');
-  if(title) title.textContent=active?'本地模型服务已启用':'本地模型服务未启用';
+  if(title) title.textContent=active?t('service.enabled'):t('service.disabled');
   if(message) message.textContent=active
-    ? (s.restart_required?'配置已导入。重启 Devin 后加载当前模型。':'Devin 已连接本地模型服务。')
-    : '管理端保持在线，可随时一键创建虚拟账户并导入。';
-  if(start){ start.disabled=active; start.textContent=active?'已启用':'启用并一键导入'; }
+    ? (s.restart_required?t('service.msg.importedRestart'):t('service.msg.connected'))
+    : t('service.msg.consoleReady');
+  if(start){ start.disabled=active; start.textContent=active?t('btn.enabled'):t('btn.start'); }
   if(stop) stop.disabled=!active;
   const account=document.getElementById('factAccount');
   const model=document.getElementById('factModel');
   const devin=document.getElementById('factDevin');
   const config=document.getElementById('factConfig');
-  if(account) account.textContent=s.account_imported?'已导入':(s.account_exists?'待导入':'未创建');
+  if(account) account.textContent=s.account_imported?t('state.imported'):(s.account_exists?t('state.pendingImport'):t('state.notCreated'));
   if(model) model.textContent=s.default_model_name||s.default_model||'-';
-  if(devin) devin.textContent=s.devin_running?'正在运行':'未运行';
-  if(config) config.textContent=active?'已应用':'原始配置';
+  if(devin) devin.textContent=s.devin_running?t('state.running'):t('state.notRunning');
+  if(config) config.textContent=active?t('state.applied'):t('state.originalConfig');
 }
 async function refreshLocalAccount(){
   const state=document.getElementById('localAccountState');
@@ -166,11 +166,11 @@ async function refreshLocalAccount(){
   if(!state||!badge||!fields) return;
   try{
     const account=await jget('/api/local-account');
-    if(account.ok===false) throw new Error(account.message||'状态读取失败');
+    if(account.ok===false) throw new Error(account.message||t('error.statusReadFailed'));
     fields.hidden=!account.account_exists;
     if(!account.account_exists){
-      state.textContent='尚未创建本机身份';
-      badge.textContent='未创建';
+      state.textContent=t('localAccount.notCreatedHint');
+      badge.textContent=t('state.notCreated');
       badge.className='account-badge';
       return;
     }
@@ -179,15 +179,15 @@ async function refreshLocalAccount(){
     document.getElementById('localAccountID').textContent=account.id||'-';
     document.getElementById('localAccountKey').textContent=account.api_key_masked||'****';
     const imported=!!account.imported;
-    state.textContent=imported?'已连接本地服务，重启 Devin 后生效':(account.message||'账户已创建，尚未导入 Devin');
-    badge.textContent=imported?'已导入':'待导入';
+    state.textContent=imported?t('localAccount.connectedRestart'):(account.message||t('localAccount.createdNotImported'));
+    badge.textContent=imported?t('state.imported'):t('state.pendingImport');
     badge.className='account-badge '+(imported?'ok':'pending');
     const button=document.getElementById('btnImportLocalAccount');
-    if(button) button.textContent=imported?'重新导入配置':'一键创建并导入';
+    if(button) button.textContent=imported?t('btn.reimport'):t('btn.importAccount');
   }catch(e){
     fields.hidden=true;
     state.textContent=e.message||String(e);
-    badge.textContent='异常';
+    badge.textContent=t('state.abnormal');
     badge.className='account-badge bad';
   }
 }
@@ -196,15 +196,15 @@ async function importLocalAccount(){
   if(!button) return;
   const oldText=button.textContent;
   button.disabled=true;
-  button.textContent='正在导入…';
+  button.textContent=t('state.importing');
   try{
     const account=await jsend('/api/local-account','POST');
-    if(account.ok===false) throw new Error(account.message||'导入失败');
-    toast(account.message||'本地虚拟账户已导入');
+    if(account.ok===false) throw new Error(account.message||t('error.importFailed'));
+    toast(account.message||t('toast.localAccountImported'));
     await Promise.all([refreshLocalAccount(),refreshConfig()]);
     await refreshStatus();
   }catch(e){
-    toast('导入失败: '+(e.message||e));
+    toast(t('toast.importFailed')+': '+(e.message||e));
     await refreshLocalAccount();
   }finally{
     button.disabled=false;
@@ -219,7 +219,7 @@ async function refreshConfig(){
     const ua=document.getElementById('update_auto_apply'); if(ua && c.update_auto_apply!=null) ua.checked=!!c.update_auto_apply;
     const ur=document.getElementById('update_repo'); if(ur && c.update_repo!=null) ur.value=c.update_repo||'';
     const us=document.getElementById('updateStatus');
-    if(us){ try{ const v=await jget('/api/version'); us.textContent='当前版本 v'+(v.version||'?'); }catch(_e){} }
+    if(us){ try{ const v=await jget('/api/version'); us.textContent=t('update.currentVersion',{v:(v.version||'?')}); }catch(_e){} }
   }catch(_e){}
 
   try{
@@ -247,22 +247,22 @@ async function refreshFamilies(){
     const fams=res.families||[];
     window.__fams={};
     fams.forEach(f=>{window.__fams[f.uid]=f});
-    if(!fams.length){box.innerHTML='<div class="card muted">还没有模型，点击右上角添加</div>'; return}
+    if(!fams.length){box.innerHTML='<div class="card muted">'+t('models.empty')+'</div>'; return}
     box.innerHTML=fams.map(f=>`
       <div class="card family-card">
         <h3>${escapeHtml(f.label||f.uid)}</h3>
         <div class="muted small mono">${escapeHtml(f.uid)}</div>
         <div class="muted small" style="margin-top:6px">${escapeHtml(providerLabel(f.provider))} · ctx ${f.context_window?formatCompact(f.context_window):'-'} · max_out ${f.max_tokens?formatCompact(f.max_tokens):'-'}</div>
         <div class="muted small mono" style="margin-top:4px">${escapeHtml(f.base_url||'(no base_url)')}</div>
-        <div class="muted small">key: ${escapeHtml(f.api_key_set?(f.api_key_masked||'****'):'未设置')} · model: ${escapeHtml(f.upstream_model||'-')}</div>
+        <div class="muted small">key: ${escapeHtml(f.api_key_set?(f.api_key_masked||'****'):t('state.notSet'))} · model: ${escapeHtml(f.upstream_model||'-')}</div>
         <div class="chip-row">
           ${(f.variants||[]).map(v=>`<span class="chip ${v.thinking==='medium'?'med':''}">${escapeHtml(v.thinking||'?')} · ${escapeHtml(v.id)}</span>`).join('')}
         </div>
         <div class="muted small">upstream: ${escapeHtml((f.variants&&f.variants[0]&&f.variants[0].upstream_model)||'-')}</div>
         <div class="row gap" style="margin-top:12px">
-          <button class="btn btn-secondary" type="button" data-fuid="${escapeHtml(f.uid)}">编辑</button>
-          <button class="btn btn-secondary" type="button" data-fuid="${escapeHtml(f.uid)}">复制</button>
-          <button class="btn btn-danger" type="button" data-fuid="${escapeHtml(f.uid)}">删除</button>
+          <button class="btn btn-secondary" type="button" data-fuid="${escapeHtml(f.uid)}">${t('btn.edit')}</button>
+          <button class="btn btn-secondary" type="button" data-fuid="${escapeHtml(f.uid)}">${t('btn.copy')}</button>
+          <button class="btn btn-danger" type="button" data-fuid="${escapeHtml(f.uid)}">${t('btn.delete')}</button>
         </div>
       </div>`).join('');
     // 家族卡片按钮：data-* + addEventListener 绑定，避免属性内联 JS 的双上下文转义失效
@@ -276,7 +276,7 @@ async function refreshFamilies(){
         else if(act==='del'){deleteFamily(uid);}
       });
     });
-  }catch(e){box.innerHTML='<div class="card bad">加载失败: '+escapeHtml(e.message)+'</div>'}
+  }catch(e){box.innerHTML='<div class="card bad">'+t('error.loadFailed')+': '+escapeHtml(e.message)+'</div>'}
 }
 function formPatch(){
   return {
@@ -295,31 +295,31 @@ function formPatch(){
   };
 }
 async function saveConfig(){
-  try{ const res=await jsend('/api/config','PUT',formPatch()); toast(res.message||'已保存'); await refreshAll(); }
-  catch(e){ toast('保存失败: '+e.message) }
+  try{ const res=await jsend('/api/config','PUT',formPatch()); toast(res.message||t('toast.saved')); await refreshAll(); }
+  catch(e){ toast(t('toast.saveFailed')+': '+e.message) }
 }
 async function testUpstream(){
-  const el=document.getElementById('upResult'); el.textContent='测试中…';
+  const el=document.getElementById('upResult'); el.textContent=t('state.testing');
   try{
     const res=await jsend('/api/test-upstream','POST');
     el.textContent=res.ok?('OK '+ (res.text||'')):('FAIL '+(res.error||''));
-    toast(res.ok?'上游正常':(res.error||'失败'));
+    toast(res.ok?t('state.upstreamOk'):(res.error||t('state.failed')));
   }catch(e){ el.textContent=e.message; toast(e.message) }
 }
 async function control(action){
   const button=document.getElementById(action==='start'?'btnServiceStart':'btnServiceStop');
   const original=button?button.textContent:'';
-  if(button){ button.disabled=true; button.textContent=action==='start'?'正在启用…':'正在恢复…'; }
+  if(button){ button.disabled=true; button.textContent=action==='start'?t('state.enabling'):t('state.restoring'); }
   try{
     const res=await jsend('/api/control/'+action,'POST');
-    if(res.ok===false) throw new Error(res.message||'操作失败');
+    if(res.ok===false) throw new Error(res.message||t('error.operationFailed'));
     toast(res.message||action);
     await refreshAll();
   }catch(e){
     if(action==='start' && typeof window.nativeStart==='function'){
       try{
         const msg=await window.nativeStart();
-        toast(msg==='ok'?'服务已启动':msg);
+        toast(msg==='ok'?t('toast.serviceStarted'):msg);
         await waitOnline(8000);
         await refreshAll();
         return;
@@ -337,13 +337,13 @@ async function restartDevin(){
   if(!button) return;
   const original=button.textContent;
   button.disabled=true;
-  button.textContent='正在重启…';
+  button.textContent=t('state.restarting');
   try{
     const result=await jsend('/api/devin/restart','POST');
-    if(result.ok===false) throw new Error(result.message||'重启失败');
-    toast(result.message||'Devin 已重启');
+    if(result.ok===false) throw new Error(result.message||t('error.restartFailed'));
+    toast(result.message||t('toast.devinRestarted'));
     await refreshStatus();
-  }catch(e){ toast('重启失败: '+(e.message||e)); }
+  }catch(e){ toast(t('toast.restartFailed')+': '+(e.message||e)); }
   finally{ button.disabled=false; button.textContent=original; }
 }
 
@@ -353,17 +353,17 @@ async function exportChats(){
   if(!button) return;
   const original=button.textContent;
   button.disabled=true;
-  button.textContent='正在导出…';
-  if(result) result.textContent='正在创建聊天备份…';
+  button.textContent=t('state.exporting');
+  if(result) result.textContent=t('state.creatingChatBackup');
   try{
     const data=await jsend('/api/chats/export','POST');
-    if(data.ok===false) throw new Error(data.message||'导出失败');
-    const text=(data.message||'导出完成')+'：'+(data.path||'');
+    if(data.ok===false) throw new Error(data.message||t('error.exportFailed'));
+    const text=(data.message||t('toast.exportDone'))+': '+(data.path||'');
     if(result) result.textContent=text;
-    toast('聊天记录已导出');
+    toast(t('toast.chatsExported'));
   }catch(e){
-    if(result) result.textContent='导出失败：'+(e.message||e);
-    toast('导出失败: '+(e.message||e));
+    if(result) result.textContent=t('error.exportFailed')+': '+(e.message||e);
+    toast(t('toast.exportFailed')+': '+(e.message||e));
   }finally{ button.disabled=false; button.textContent=original; }
 }
 function waitOnline(ms){
@@ -400,7 +400,7 @@ function providerLabel(p){
   p = String(p||'openai').toLowerCase();
   if(p==='anthropic') return 'Anthropic';
   if(p==='responses') return 'OpenAI Responses';
-  return 'OpenAI 兼容';
+  return t('models.modal.providerOpenai');
 }
 function selectedLevels(){
   return [...document.querySelectorAll('.f-level:checked')].map(x=>x.value);
@@ -417,7 +417,7 @@ function refreshUidHint(){
   const existing = (document.getElementById('f_uid')||{}).value || '';
   const uid = existing ? ensureByokUID(existing) : ensureByokUID(label || up);
   const hint = document.getElementById('f_uid_hint');
-  if(hint) hint.textContent = 'Family UID 将自动生成为：' + (uid || '-');
+  if(hint) hint.textContent = t('models.modal.uidHintDynamic') + (uid || '-');
 }
 function focusFamilyForm(){
   // macOS 原生 WebView 启动时可能只激活窗口，不会把键盘焦点交给 HTML。
@@ -428,7 +428,7 @@ function focusFamilyForm(){
 }
 function openFamilyModal(){
   const title = document.getElementById('familyModalTitle');
-  if(title) title.textContent = '添加模型';
+  if(title) title.textContent = t('models.modal.addTitle');
   document.getElementById('f_uid').value = '';
   document.getElementById('f_label').value = '';
   document.getElementById('f_upstream').value = '';
@@ -447,25 +447,25 @@ function openFamilyModal(){
   focusFamilyForm();
 }
 function closeFamilyModal(){ document.getElementById('familyModal').hidden = true }
-function editFamilyByUid(uid){ const f=window.__fams[uid]; if(!f){toast('模型不存在');return;} editFamily(f);}
+function editFamilyByUid(uid){ const f=window.__fams[uid]; if(!f){toast(t('error.modelNotFound'));return;} editFamily(f);}
 function copyFamily(uid){
-  const f=window.__fams[uid]; if(!f){toast('模型不存在');return;}
+  const f=window.__fams[uid]; if(!f){toast(t('error.modelNotFound'));return;}
   editFamily(f);
   const title = document.getElementById('familyModalTitle');
-  if(title) title.textContent = '复制模型';
+  if(title) title.textContent = t('models.modal.copyTitle');
   document.getElementById('f_uid').value = '';
   document.getElementById('f_label').value = (f.label || f.uid) + ' Copy';
   refreshUidHint();
 }
 function editFamily(f){
   const title = document.getElementById('familyModalTitle');
-  if(title) title.textContent = '编辑模型';
+  if(title) title.textContent = t('models.modal.editTitle');
   document.getElementById('f_uid').value = f.uid || '';
   document.getElementById('f_label').value = f.label || '';
   document.getElementById('f_provider').value = f.provider || 'openai';
   document.getElementById('f_base').value = f.base_url || '';
   document.getElementById('f_key').value = '';
-  document.getElementById('f_key').placeholder = f.api_key_set ? ('当前: '+(f.api_key_masked||'****')) : '未设置';
+  document.getElementById('f_key').placeholder = f.api_key_set ? (t('models.modal.currentKey')+(f.api_key_masked||'****')) : t('state.notSet');
   document.getElementById('f_upstream').value = f.upstream_model || (f.variants&&f.variants[0]&&f.variants[0].upstream_model) || '';
   document.getElementById('f_ctx').value = f.context_window || 128000;
   document.getElementById('f_max').value = f.max_tokens || 8192;
@@ -481,12 +481,12 @@ function editFamily(f){
 async function saveFamily(){
   const label = document.getElementById('f_label').value.trim();
   const upstream = document.getElementById('f_upstream').value.trim();
-  if(!label){ toast('请填写显示名 Label'); return }
-  if(!upstream){ toast('请填写上游模型 ID'); return }
+  if(!label){ toast(t('error.labelRequired')); return }
+  if(!upstream){ toast(t('error.upstreamRequired')); return }
   const existing = document.getElementById('f_uid').value.trim();
   const uid = existing ? ensureByokUID(existing) : ensureByokUID(label || upstream);
   const levels = selectedLevels();
-  if(!levels.length){ toast('请至少选择一种思考强度'); return }
+  if(!levels.length){ toast(t('error.levelRequired')); return }
   const body = {
     label,
     uid,
@@ -503,16 +503,16 @@ async function saveFamily(){
   };
   try{
     await jsend('/api/families','POST', body);
-    toast('模型已保存');
+    toast(t('toast.modelSaved'));
     closeFamilyModal();
     refreshFamilies();
   }catch(e){ toast(e.message) }
 }
 async function deleteFamily(uid){
-  if(!confirm('删除模型 '+uid+' 及其所有思考强度变体？')) return;
+  if(!confirm(t('confirm.deleteFamily',{uid:uid}))) return;
   try{
     await jsend('/api/families?uid='+encodeURIComponent(uid),'DELETE');
-    toast('已删除'); refreshFamilies();
+    toast(t('toast.deleted')); refreshFamilies();
   }catch(e){ toast(e.message) }
 }
 
@@ -533,7 +533,7 @@ function modelOptionLabel(m){
 function fillOneModelSelect(selId, cur, list){
   const sel = document.getElementById(selId);
   if(!sel) return;
-  let html = '<option value="">（默认模型）</option>';
+  let html = '<option value="">'+t('models.defaultOption')+'</option>';
   for(const m of list){
     const id = m.id || '';
     if(!id) continue;
@@ -542,7 +542,7 @@ function fillOneModelSelect(selId, cur, list){
   }
   sel.innerHTML = html;
   if(cur && ![...sel.options].some(o=>o.value===cur)){
-    sel.innerHTML = '<option value="'+escapeHtml(cur)+'" selected>'+escapeHtml(cur)+' （已配置，列表中不存在）</option>' + sel.innerHTML;
+    sel.innerHTML = '<option value="'+escapeHtml(cur)+'" selected>'+escapeHtml(cur)+' '+t('models.configuredMissing')+'</option>' + sel.innerHTML;
   }
 }
 function fillFeatureModelSelects(models, cfg){
@@ -574,7 +574,7 @@ function fillFeatureModelSelects(models, cfg){
   for(const [selId, cur, hintId, resolved] of pairs){
     fillOneModelSelect(selId, cur||'', list);
     const hint = document.getElementById(hintId);
-    if(hint) hint.textContent = '生效: ' + (resolved||cur||def||'-');
+    if(hint) hint.textContent = t('models.featureBind.activeShort') + (resolved||cur||def||'-');
   }
 }
 async function saveFeatureModels(){
@@ -592,8 +592,8 @@ async function saveFeatureModels(){
   try{
     await jsend('/api/config','PUT', body);
     const el=document.getElementById('featureModelResult');
-    if(el) el.textContent = '已保存';
-    toast('功能模型绑定已保存');
+    if(el) el.textContent = t('toast.saved');
+    toast(t('toast.featureBindSaved'));
     await refreshConfig();
   }catch(e){
     const el=document.getElementById('featureModelResult');
@@ -619,8 +619,8 @@ async function saveDesktopPrefs(){
   };
   try{
     await jsend('/api/desktop','PUT', body);
-    const el=document.getElementById('desktopResult'); if(el) el.textContent='已保存';
-    toast('桌面设置已保存');
+    const el=document.getElementById('desktopResult'); if(el) el.textContent=t('toast.saved');
+    toast(t('toast.desktopSaved'));
   }catch(e){
     const el=document.getElementById('desktopResult'); if(el) el.textContent=e.message||String(e);
     toast(e.message||String(e));
@@ -629,9 +629,9 @@ async function saveDesktopPrefs(){
 function hideToTray(){
   if(typeof window.nativeHideToTray==='function'){
     window.nativeHideToTray();
-    toast('已隐藏到托盘');
+    toast(t('toast.hiddenToTray'));
   }else{
-    toast('请使用 devin-byok-gui.exe（浏览器模式无托盘）');
+    toast(t('toast.browserNoTray'));
   }
 }
 
@@ -643,7 +643,7 @@ async function refreshUpdatePrefs(){
     try{
       const v = await jget('/api/version');
       const el = document.getElementById('updateStatus');
-      if(el) el.textContent = '当前版本 v'+(v.version||'?')+(v.build_time?(' · build '+v.build_time):'');
+      if(el) el.textContent = t('update.currentVersion',{v:(v.version||'?')})+(v.build_time?(' · build '+v.build_time):'');
     }catch(_e){}
     // update fields may come from dedicated endpoint later; use /api/status not enough
   }catch(_e){}
@@ -663,15 +663,15 @@ async function loadUpdateConfig(){
 }
 async function checkUpdate(){
   const el=document.getElementById('updateResult');
-  if(el) el.textContent='检查中…';
+  if(el) el.textContent=t('state.checkingUpdate');
   try{
     const r = await jget('/api/update/check');
     const msg = r.message || '';
-    let text = '当前 '+(r.current||'?')+' / 最新 '+(r.latest||'?')+' — '+msg;
+    let text = t('update.currentLatest',{cur:(r.current||'?'),latest:(r.latest||'?')})+' — '+msg;
     if(r.release_url) text += ' · '+r.release_url;
     if(el) el.textContent = text;
-    if(r.update_available){ toast('发现新版本 '+(r.latest||'')); }
-    else { toast(msg||'已是最新'); }
+    if(r.update_available){ toast(t('toast.updateFound',{v:(r.latest||'')})); }
+    else { toast(msg||t('toast.upToDate')); }
     return r;
   }catch(e){
     if(el) el.textContent = e.message||String(e);
@@ -679,13 +679,13 @@ async function checkUpdate(){
   }
 }
 async function applyUpdate(){
-  if(!confirm('将下载新版本并替换当前目录下的 exe，服务会短暂中断。继续？')) return;
+  if(!confirm(t('confirm.applyUpdate'))) return;
   const el=document.getElementById('updateResult');
-  if(el) el.textContent='下载更新中…';
+  if(el) el.textContent=t('state.downloading');
   try{
     const r = await jsend('/api/update/apply','POST',{});
     if(el) el.textContent = r.message||JSON.stringify(r);
-    toast(r.message||'已调度更新');
+    toast(r.message||t('toast.updateScheduled'));
   }catch(e){
     if(el) el.textContent = e.message||String(e);
     toast(e.message||String(e));
@@ -699,7 +699,7 @@ async function saveUpdatePrefs(){
   };
   try{
     await jsend('/api/config','PUT', body);
-    toast('更新设置已保存');
+    toast(t('toast.updateSettingsSaved'));
   }catch(e){ toast(e.message||String(e)); }
 }
 
@@ -752,7 +752,7 @@ function loadFooterVersion(){
     if(v && v.version){
       setFooterVersion(v.version);
       const sub=document.querySelector('.brand .sub');
-      if(sub){ sub.textContent = 'v'+v.version+' · 本地模型接入控制台'; }
+      if(sub){ sub.textContent = t('footer.sub',{v:v.version}); }
     }
   }).catch(()=>{ setFooterVersion(APP_VERSION); });
 }
@@ -761,7 +761,7 @@ async function runUpdateCheck(opts){
   opts = opts || {};
   // 检查更新绝不打开进度条
   showFooterProgress(false);
-  setFooterUpdate('检查更新中…', false);
+  setFooterUpdate(t('state.checkingUpdate'), false);
   try{
     const r = await jget('/api/update/check');
     __lastUpdateCheck = r;
@@ -769,25 +769,25 @@ async function runUpdateCheck(opts){
     const latest = (r && r.latest) || cur;
     setFooterVersion(cur);
     if(!r || !r.ok){
-      setFooterUpdate((r && r.message) || '更新检查失败', false);
+      setFooterUpdate((r && r.message) || t('state.updateCheckFailed'), false);
       return r;
     }
     if(r.update_available){
-      setFooterUpdate('有新版本 v' + latest, true);
+      setFooterUpdate(t('state.newVersion',{v:latest}), true);
       if(opts.showModal !== false){
         showUpdateModal(r, !!opts.force);
       }
     }else{
-      // 关闭在线更新 / 已最新 等
-      if(r.message && /关闭|未配置|失败|HTTP|error/i.test(r.message) && !/最新/.test(r.message)){
+      // 更新未启用 / 已最新 / 检查失败等：显示服务端原始 message，否则显示已最新
+      if(r.message && /关闭|未配置|失败|HTTP|error|disabled|not configured|fail/i.test(r.message) && !/最新|up to date|latest/i.test(r.message)){
         setFooterUpdate(r.message, false);
       }else{
-        setFooterUpdate('已是最新 v' + latest, false);
+        setFooterUpdate(t('state.upToDateV',{v:latest}), false);
       }
     }
     return r;
   }catch(e){
-    setFooterUpdate('更新检查失败: ' + (e.message || String(e)), false);
+    setFooterUpdate(t('state.updateCheckFailedMsg')+': '+(e.message || String(e)), false);
     showFooterProgress(false);
     return null;
   }
@@ -799,8 +799,11 @@ function showUpdateModal(r, force){
   __updateModalForced = !!force;
   const ver = document.getElementById('updateModalVersions');
   const notes = document.getElementById('updateModalNotes');
-  if(ver) ver.textContent = '当前 v' + (r.current||APP_VERSION) + '  →  最新 v' + (r.latest||'?');
-  if(notes) notes.textContent = r.chinese_notes || r.body || ('发现新版本 v'+(r.latest||'')+'，请更新。');
+  if(ver) ver.textContent = t('update.currentArrowLatest',{cur:(r.current||APP_VERSION),latest:(r.latest||'?')});
+  // notes：中文界面优先中文更新日志，英文界面优先英文原文
+  if(notes) notes.textContent = I18N.currentLang()==='zh'
+    ? (r.chinese_notes || r.body || t('update.foundFallback',{v:(r.latest||'')}))
+    : (r.body || r.chinese_notes || t('update.foundFallback',{v:(r.latest||'')}));
   const later = document.getElementById('btnUpdateLater');
   if(later) later.hidden = false;
   modal.hidden = false;
@@ -815,8 +818,8 @@ function dismissUpdateModal(){
 async function acceptUpdateAndDownload(){
   dismissUpdateModal();
   __updateDownloadActive = true;
-  setFooterUpdate('正在下载更新…', true);
-  setFooterProgress(0, '准备下载');
+  setFooterUpdate(t('state.downloadingUpdate'), true);
+  setFooterProgress(0, t('state.prepareDownload'));
   if(__updateProgressTimer) clearInterval(__updateProgressTimer);
   __updateProgressTimer = setInterval(pollUpdateProgress, 400);
   try{
@@ -825,31 +828,31 @@ async function acceptUpdateAndDownload(){
     if(r && r.ok){
       const msg = r.message || '';
       // 无需更新时不显示进度、不退出
-      if(/无需更新|已是最新|不用更新/.test(msg)){
+      if(/无需更新|已是最新|不用更新|no update|up to date/i.test(msg)){
         __updateDownloadActive = false;
         showFooterProgress(false);
-        setFooterUpdate('已是最新 v' + APP_VERSION, false);
+        setFooterUpdate(t('state.upToDateV',{v:APP_VERSION}), false);
         toast(msg);
         return r;
       }
-      setFooterProgress(100, '即将重启…');
-      toast(msg || '即将安装更新并重启');
+      setFooterProgress(100, t('state.restartingSoon'));
+      toast(msg || t('toast.installRestart'));
       if(typeof window.nativeQuitForce === 'function'){
         setTimeout(()=>window.nativeQuitForce(), 300);
       }else if(typeof window.nativeQuit === 'function'){
         setTimeout(()=>window.nativeQuit(), 500);
       }else{
-        setTimeout(()=>{ toast('请关闭窗口以完成文件替换'); }, 800);
+        setTimeout(()=>{ toast(t('toast.closeWindowToReplace')); }, 800);
       }
     }else{
       __updateDownloadActive = false;
-      setFooterUpdate('更新失败', true);
+      setFooterUpdate(t('state.updateFailed'), true);
       showFooterProgress(false);
-      toast((r && r.message) || '更新失败');
+      toast((r && r.message) || t('toast.updateFailed'));
     }
   }catch(e){
     __updateDownloadActive = false;
-    setFooterUpdate('更新失败', true);
+    setFooterUpdate(t('state.updateFailed'), true);
     showFooterProgress(false);
     toast(e.message || String(e));
   }finally{
@@ -872,7 +875,7 @@ async function pollUpdateProgress(){
       return;
     }
     if(phase === 'error'){
-      setFooterProgress(p.percent||0, p.message||'错误');
+      setFooterProgress(p.percent||0, p.message||t('state.error'));
       return;
     }
     if(phase === 'downloading' || phase === 'verifying' || phase === 'scheduling' || phase === 'done'){
@@ -884,16 +887,16 @@ async function pollUpdateProgress(){
 }
 
 function startUpdateAutoCheck(){
-  setFooterUpdate('可在设置中手动检查更新', false);
+  setFooterUpdate(t('state.manualCheckHint'), false);
 }
 
 // 覆盖旧的 checkUpdate / applyUpdate，复用底栏逻辑
 async function checkUpdate(){
   const el=document.getElementById('updateResult');
-  if(el) el.textContent='检查中…';
+  if(el) el.textContent=t('state.checkingUpdate');
   const r = await runUpdateCheck({showModal:true, force:false});
   if(el && r){
-    el.textContent = (r.message||'') + (r.update_available ? '（可更新）' : '');
+    el.textContent = (r.message||'') + (r.update_available ? t('update.availableSuffix') : '');
   }
   return r;
 }
@@ -909,26 +912,26 @@ window.__prompts = {};
 async function refreshPrompts(){
   const box = document.getElementById('promptList');
   const st = document.getElementById('extStatus');
-  if(st) st.textContent = '加载中…';
+  if(st) st.textContent = t('state.loading');
   try{
     const j = await jget('/api/prompts');
     const list = (j && j.prompts) ? j.prompts : [];
     window.__prompts = {};
     if(box){
       if(!list.length){
-        box.innerHTML = '<div class="muted">暂无自定义提示词（固定内置工具提示仍会注入）</div>';
+        box.innerHTML = '<div class="muted">'+t('prompts.empty')+'</div>';
       }else{
         box.innerHTML = list.map(p => {
           window.__prompts[p.id] = p;
           const en = !!p.enabled;
           return `<div class="card model-card">
-            <div class="card-h">${escapeHtml(p.title||'(无标题)')}
- <span class="muted small">${en?'启用':'禁用'} · ${escapeHtml(p.mode||'append')} · ${escapeHtml(p.scope||'global')}</span></div>
+            <div class="card-h">${escapeHtml(p.title||t('prompts.untitled'))}
+ <span class="muted small">${en?t('state.enabled'):t('state.disabled')} · ${escapeHtml(p.mode||'append')} · ${escapeHtml(p.scope||'global')}</span></div>
             <pre class="muted small" style="white-space:pre-wrap;max-height:120px;overflow:auto">${escapeHtml(p.body||'')}</pre>
             <div class="row gap">
-              <button class="btn btn-secondary" type="button" data-pid="${escapeHtml(p.id)}" data-act="edit">编辑</button>
-              <button class="btn btn-secondary" type="button" data-pid="${escapeHtml(p.id)}" data-act="toggle">${en?'禁用':'启用'}</button>
-              <button class="btn btn-secondary" type="button" data-pid="${escapeHtml(p.id)}" data-act="del">删除</button>
+              <button class="btn btn-secondary" type="button" data-pid="${escapeHtml(p.id)}" data-act="edit">${t('btn.edit')}</button>
+              <button class="btn btn-secondary" type="button" data-pid="${escapeHtml(p.id)}" data-act="toggle">${en?t('btn.disable'):t('btn.enable')}</button>
+              <button class="btn btn-secondary" type="button" data-pid="${escapeHtml(p.id)}" data-act="del">${t('btn.delete')}</button>
             </div>
           </div>`;
         }).join('');
@@ -949,41 +952,41 @@ async function refreshPrompts(){
       if(st){
         const inst = ej && ej.installed;
         const dis = ej && ej.disabled;
-        let line = (inst ? '已安装' : '未安装') + ' · ' + (ej.id || '');
-        if(dis) line += ' · 已禁用(.obsolete)';
-        else if(inst) line += ' · 已启用';
+        let line = (inst ? t('state.installed') : t('state.notInstalled')) + ' · ' + (ej.id || '');
+        if(dis) line += ' · '+t('state.disabledObsolete');
+        else if(inst) line += ' · '+t('state.enabled');
         if(ej.dir) line += ' @ ' + ej.dir;
         if(ej.folder) line += ' / ' + ej.folder;
         st.textContent = line;
       }
     }catch(ex){
-      if(st) st.textContent = '扩展状态获取失败: ' + (ex.message || ex);
+      if(st) st.textContent = t('error.extStatusFailed')+': ' + (ex.message || ex);
     }
   }catch(e){
-    if(st) st.textContent = '提示词 API 失败: ' + (e.message || e);
-    if(box) box.innerHTML = '<div class="muted">加载失败，请确认服务已启动</div>';
-    toast('提示词加载失败: ' + (e.message || e));
+    if(st) st.textContent = t('error.promptsApiFailed')+': ' + (e.message || e);
+    if(box) box.innerHTML = '<div class="muted">'+t('error.loadFailedService')+'</div>';
+    toast(t('toast.promptsLoadFailed')+': ' + (e.message || e));
   }
 }
 
 function openPromptEditor(p){
-  const title = window.prompt('标题', (p && p.title) || '');
+  const title = window.prompt(t('prompts.editor.title'), (p && p.title) || '');
   if(title === null) return;
-  const mode = window.prompt('模式 append | prepend | replace', (p && p.mode) || 'append');
+  const mode = window.prompt(t('prompts.editor.mode'), (p && p.mode) || 'append');
   if(mode === null) return;
-  const body = window.prompt('正文', (p && p.body) || '');
+  const body = window.prompt(t('prompts.editor.body'), (p && p.body) || '');
   if(body === null) return;
-  const scope = window.prompt('范围 global | model | route | task（留空表示全局）', (p && p.scope) || '');
+  const scope = window.prompt(t('prompts.editor.scope'), (p && p.scope) || '');
   if(scope === null) return;
-  const routes = window.prompt('路由，逗号分隔：chat,fast_context,deepwiki,codemap', ((p && p.routes)||[]).join(','));
+  const routes = window.prompt(t('prompts.editor.routes'), ((p && p.routes)||[]).join(','));
   if(routes === null) return;
-  const models = window.prompt('模型 ID 或 family UID，逗号分隔（留空不限）', ((p && p.models)||[]).join(','));
+  const models = window.prompt(t('prompts.editor.models'), ((p && p.models)||[]).join(','));
   if(models === null) return;
-  const tasks = window.prompt('任务，逗号分隔：coding,debug,research,review,explain,general', ((p && p.tasks)||[]).join(','));
+  const tasks = window.prompt(t('prompts.editor.tasks'), ((p && p.tasks)||[]).join(','));
   if(tasks === null) return;
-  const priority = window.prompt('优先级数字，越小越先注入', String((p && p.priority) || 50));
+  const priority = window.prompt(t('prompts.editor.priority'), String((p && p.priority) || 50));
   if(priority === null) return;
-  const enabled = window.confirm('是否启用该提示词？');
+  const enabled = window.confirm(t('prompts.editor.confirmEnabled'));
   savePrompt({
     id: (p && p.id) || '',
     title: title,
@@ -1003,47 +1006,47 @@ function editPromptById(id){ editPrompt(window.__prompts && window.__prompts[id]
 async function savePrompt(p){
   try{
     const j = await jsend('/api/prompts', 'POST', p);
-    if(j && j.ok === false){ toast(j.message || '保存失败'); return; }
-    toast('已保存');
+    if(j && j.ok === false){ toast(j.message || t('toast.saveFailed')); return; }
+    toast(t('toast.saved'));
     await refreshPrompts();
   }catch(e){
-    toast('保存失败: ' + (e.message || e));
+    toast(t('toast.saveFailed')+': ' + (e.message || e));
   }
 }
 
 async function togglePrompt(id){
   const p = window.__prompts && window.__prompts[id];
-  if(!p){ toast('未找到提示词'); return; }
+  if(!p){ toast(t('error.promptNotFound')); return; }
   const next = Object.assign({}, p, { enabled: !p.enabled });
   await savePrompt(next);
 }
 
 async function deletePrompt(id){
-  if(!window.confirm('删除该提示词？')) return;
+  if(!window.confirm(t('prompts.confirmDelete'))) return;
   try{
     const j = await jsend('/api/prompts?id=' + encodeURIComponent(id), 'DELETE');
-    if(j && j.ok === false){ toast(j.message || '删除失败'); return; }
-    toast('已删除');
+    if(j && j.ok === false){ toast(j.message || t('toast.deleteFailed')); return; }
+    toast(t('toast.deleted'));
     await refreshPrompts();
   }catch(e){
-    toast('删除失败: ' + (e.message || e));
+    toast(t('toast.deleteFailed')+': ' + (e.message || e));
   }
 }
 
 async function extAction(action){
   const st = document.getElementById('extStatus');
-  if(st) st.textContent = '执行中: ' + action + '…';
+  if(st) st.textContent = t('state.extRunning',{action:action});
   try{
     const j = await jsend('/api/extension?action=' + encodeURIComponent(action), 'POST');
     if(j && j.ok === false){
-      toast(j.message || (action + ' 失败'));
+      toast(j.message || t('toast.extActionFailed',{action:action}));
     }else{
-      toast('扩展 ' + action + ' 成功' + (j.path ? (' → ' + j.path) : ''));
+      toast(t('toast.extActionDone',{action:action}) + (j.path ? (' → ' + j.path) : ''));
     }
     await refreshPrompts();
   }catch(e){
-    if(st) st.textContent = '扩展操作失败: ' + (e.message || e);
-    toast('扩展操作失败: ' + (e.message || e));
+    if(st) st.textContent = t('error.extActionFailed')+': ' + (e.message || e);
+    toast(t('toast.extActionFailed')+': ' + (e.message || e));
   }
 }
 
