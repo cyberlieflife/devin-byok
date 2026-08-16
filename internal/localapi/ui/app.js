@@ -1007,7 +1007,10 @@ async function loadVersion(){
 loadFooterVersion();
 refreshAll();
 startUpdateAutoCheck();
+// 指标 2 秒刷新；状态同步轮询：GUI 启动后自动恢复启用是异步完成的
+// （last-apply 检测 + start），若 status 不轮询会一直停留在"未启用"直到手动刷新
 setInterval(refreshMetrics, 2000);
+setInterval(refreshStatus, 2000);
 ['f_label','f_upstream'].forEach(id=>{ const el=document.getElementById(id); if(el){ el.addEventListener('input', refreshUidHint); }});
 // 语言切换后重刷动态渲染区域（静态 data-i18n 由 i18n.applyLang 处理）；
 // refreshAll 覆盖 metrics/status/config/localAccount 与 models 页，prompts 页单独刷新，

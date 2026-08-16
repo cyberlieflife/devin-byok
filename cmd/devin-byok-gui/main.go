@@ -75,7 +75,11 @@ func main() {
 	if _, err := os.Stat(filepath.Join(platform.DataDir(), "last-apply.json")); err == nil {
 		go func() {
 			time.Sleep(600 * time.Millisecond)
-			_ = postControl("start")
+			if err := postControl("start"); err != nil {
+				logx.Warnf("auto re-enable failed: %v", err)
+			} else {
+				logx.Infof("auto re-enable ok")
+			}
 		}()
 	}
 
