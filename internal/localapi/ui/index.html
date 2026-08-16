@@ -367,7 +367,7 @@
     <span class="footer-sep">·</span>
     <span id="footerUpdate" data-i18n-js>等待检查…</span>
     <span class="footer-sep">·</span>
-    <button class="btn btn-secondary btn-compact" id="btnSupport" onclick="openSupportModal()" data-i18n="btn.support">赞赏支持</button>
+    <button class="btn-support" id="btnSupport" onclick="openSupportModal()" data-i18n="btn.support">赞赏支持</button>
   </div>
   <div class="footer-right">
     <div class="footer-progress" id="footerProgressWrap" hidden>
@@ -382,8 +382,8 @@
   <div class="modal card support-modal">
     <div class="card-h" data-i18n="support.title">赞赏支持</div>
     <p class="muted small" data-i18n="support.body">如果觉得项目好可以赞赏我支持一下谢谢喵</p>
-    <img src="/ui/support.jpg?v=1.4.1" alt="Support" style="max-width:280px;width:100%;border-radius:10px;margin-top:6px"/>
-    <div class="row gap" style="margin-top:14px;justify-content:flex-end">
+    <img class="support-qr" src="/ui/support.jpg?v=1.4.1" alt="Support"/>
+    <div class="row gap" style="margin-top:12px;justify-content:flex-end">
       <button class="btn btn-secondary" onclick="closeSupportModal()" data-i18n="btn.cancel">取消</button>
     </div>
   </div>

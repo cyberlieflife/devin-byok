@@ -50,6 +50,12 @@ body{margin:0;background:var(--canvas);color:var(--ink);font-family:var(--font);
 .service-facts span{margin-bottom:3px;color:var(--muted);font-size:11px;text-transform:uppercase}.service-facts strong{font-size:13px;font-weight:650}
 .section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 0 12px}.section-head h2{margin:0;font-size:18px;font-weight:650}.section-head p{margin:2px 0 0}
 .btn-compact{min-height:34px;padding:6px 11px;font-size:12px}
+/* 底栏「赞赏支持」按钮：醒目红色、无边框 */
+.btn-support{background:#e5484d;color:#fff;border:none;min-height:26px;padding:4px 10px;font-size:12px;font-weight:600;border-radius:6px;cursor:pointer;line-height:1.4}
+.btn-support:hover{background:#d64044}
+/* 赞赏弹窗：宽度贴合二维码（照片宽 + 少量留白），照片居中 */
+.support-modal{width:fit-content;min-width:0;max-width:min(440px,100%)}
+.support-qr{display:block;width:320px;height:320px;max-width:100%;border-radius:10px;margin:6px auto 0}
 .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px}
 @media(max-width:900px){.stat-grid{grid-template-columns:1fr 1fr}.two-col,.family-grid{grid-template-columns:1fr!important}}
 .stat .label{font-size:12px;color:var(--muted)}.stat .value{font-size:28px;font-weight:500;letter-spacing:0;margin-top:4px}
