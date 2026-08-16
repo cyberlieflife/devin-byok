@@ -75,7 +75,7 @@ update:
   auto_apply: false
 ```
 
-完整字段见 `config.example.yaml`。
+完整字段见 `internal/payload/config.example.yaml`。
 
 ## GUI 页面
 
