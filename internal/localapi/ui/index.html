@@ -14,15 +14,15 @@
       <img class="logo" src="/ui/logo.png" alt="Devin BYOK" width="36" height="36"/>
       <div>
         <div class="title">Devin BYOK</div>
-        <div class="sub">本地模型接入控制台</div>
+        <div class="sub" data-i18n="sub.title">本地模型接入控制台</div>
       </div>
     </div>
     <div class="top-actions">
-      <span class="pill" id="apiPill"><i class="dot" id="apiDot"></i><span id="apiText">管理端检测中</span></span>
-      <button class="btn btn-secondary btn-nav" id="btnSettings" data-page="settings" onclick="showPage('settings')">设置</button>
-      <button class="btn btn-secondary btn-nav active" data-page="monitor" onclick="showPage('monitor')">监控</button>
-      <button class="btn btn-secondary btn-nav" data-page="models" onclick="showPage('models')">模型</button>
-      <button class="btn btn-secondary btn-nav" data-page="prompts" onclick="showPage('prompts')">提示词</button>
+      <span class="pill" id="apiPill"><i class="dot" id="apiDot"></i><span id="apiText" data-i18n="state.apiChecking">管理端检测中</span></span>
+      <button class="btn btn-secondary btn-nav" id="btnSettings" data-page="settings" onclick="showPage('settings')" data-i18n="nav.settings">设置</button>
+      <button class="btn btn-secondary btn-nav active" data-page="monitor" onclick="showPage('monitor')" data-i18n="nav.monitor">监控</button>
+      <button class="btn btn-secondary btn-nav" data-page="models" onclick="showPage('models')" data-i18n="nav.models">模型</button>
+      <button class="btn btn-secondary btn-nav" data-page="prompts" onclick="showPage('prompts')" data-i18n="nav.prompts">提示词</button>
       <button class="btn btn-secondary btn-nav lang-toggle" id="btnLang" data-i18n="lang.label" data-i18n-title="lang.title" onclick="I18N.toggleLang()">中</button>
     </div>
   </header>
@@ -34,48 +34,48 @@
         <div class="service-indicator" id="serviceIndicator" aria-hidden="true"></div>
         <div class="service-copy">
           <div class="eyebrow">BYOK SERVICE</div>
-          <h1 id="serviceTitle">正在检查本地服务</h1>
-          <p id="serviceMessage">读取账户、Devin 和本地路由状态…</p>
+          <h1 id="serviceTitle" data-i18n="service.title.checking">正在检查本地服务</h1>
+          <p id="serviceMessage" data-i18n="service.message.checking">读取账户、Devin 和本地路由状态…</p>
         </div>
       </div>
       <div class="service-actions">
-        <button class="btn btn-primary btn-main-action" id="btnServiceStart" onclick="control('start')">启用并一键导入</button>
-        <button class="btn btn-danger" id="btnServiceStop" onclick="control('stop')">停止并恢复</button>
-        <button class="btn btn-secondary" id="btnRestartDevin" onclick="restartDevin()">重启 Devin</button>
+        <button class="btn btn-primary btn-main-action" id="btnServiceStart" onclick="control('start')" data-i18n="btn.start">启用并一键导入</button>
+        <button class="btn btn-danger" id="btnServiceStop" onclick="control('stop')" data-i18n="btn.stop">停止并恢复</button>
+        <button class="btn btn-secondary" id="btnRestartDevin" onclick="restartDevin()" data-i18n="btn.restartDevin">重启 Devin</button>
       </div>
       <div class="service-facts">
-        <div><span>本地账户</span><strong id="factAccount">检测中</strong></div>
-        <div><span>默认模型</span><strong id="factModel">-</strong></div>
-        <div><span>Devin</span><strong id="factDevin">检测中</strong></div>
-        <div><span>配置状态</span><strong id="factConfig">检测中</strong></div>
+        <div><span data-i18n="fact.account">本地账户</span><strong id="factAccount" data-i18n="state.checking">检测中</strong></div>
+        <div><span data-i18n="fact.model">默认模型</span><strong id="factModel">-</strong></div>
+        <div><span>Devin</span><strong id="factDevin" data-i18n="state.checking">检测中</strong></div>
+        <div><span data-i18n="fact.config">配置状态</span><strong id="factConfig" data-i18n="state.checking">检测中</strong></div>
       </div>
     </section>
 
     <section class="section-head">
-      <div><h2>运行概览</h2><p class="muted">请求、缓存、Token 与模型使用</p></div>
-      <button class="btn btn-secondary btn-compact" onclick="refreshAll()">刷新</button>
+      <div><h2 data-i18n="monitor.overview.title">运行概览</h2><p class="muted" data-i18n="monitor.overview.sub">请求、缓存、Token 与模型使用</p></div>
+      <button class="btn btn-secondary btn-compact" onclick="refreshAll()" data-i18n="btn.refresh">刷新</button>
     </section>
     <div class="stat-grid">
       <div class="card stat">
-        <div class="label">请求成功</div>
+        <div class="label" data-i18n="metric.reqOk">请求成功</div>
         <div class="value ok" id="mOk">0</div>
       </div>
       <div class="card stat">
-        <div class="label">请求失败</div>
+        <div class="label" data-i18n="metric.reqFail">请求失败</div>
         <div class="value bad" id="mFail">0</div>
       </div>
       <div class="card stat">
-        <div class="label">Token 输入≈</div>
+        <div class="label" data-i18n="metric.tokIn">Token 输入≈</div>
         <div class="value" id="mTin">0</div>
       </div>
       <div class="card stat">
-        <div class="label">Token 输出≈</div>
+        <div class="label" data-i18n="metric.tokOut">Token 输出≈</div>
         <div class="value" id="mTout">0</div>
       </div>
     </div>
     <div class="two-col">
       <div class="card">
-        <div class="card-h">Prompt 缓存命中率</div>
+        <div class="card-h" data-i18n="metric.cacheRate">Prompt 缓存命中率</div>
         <div class="pie-wrap">
           <canvas id="pieCache" width="180" height="180"></canvas>
           <div class="pie-center"><div id="pieRate">0%</div><div class="muted small">cached/prompt</div></div>
@@ -83,36 +83,36 @@
         <div class="muted small" id="cacheDetail">hit 0 / miss 0</div>
       </div>
       <div class="card">
-        <div class="card-h">模型使用排行</div>
-        <div id="modelRank" class="rank-list muted">暂无数据</div>
+        <div class="card-h" data-i18n="monitor.modelRank">模型使用排行</div>
+        <div id="modelRank" class="rank-list muted" data-i18n="state.noData">暂无数据</div>
       </div>
     </div>
     
     <div class="two-col feature-usage">
       <div class="card">
-        <div class="card-h">功能调用</div>
+        <div class="card-h" data-i18n="monitor.featureCalls">功能调用</div>
         <div class="stat-grid" style="grid-template-columns:1fr 1fr;gap:8px">
-          <div><div class="label">DeepWiki 成功</div><div class="value ok" id="mDeepWiki">0</div></div>
-          <div><div class="label">DeepWiki 失败</div><div class="value bad" id="mDeepWikiFail">0</div></div>
-          <div><div class="label">CodeMap 成功</div><div class="value ok" id="mCodeMap">0</div></div>
-          <div><div class="label">CodeMap 失败</div><div class="value bad" id="mCodeMapFail">0</div></div>
-          <div><div class="label">CodeMap Fast</div><div class="value" id="mCodeMapFast">0</div></div>
-          <div><div class="label">CodeMap Smart</div><div class="value" id="mCodeMapSmart">0</div></div>
-          <div><div class="label">Commit 成功</div><div class="value ok" id="mCommit">0</div></div>
-          <div><div class="label">Commit 失败</div><div class="value bad" id="mCommitFail">0</div></div>
-          <div><div class="label">Fast Context 成功</div><div class="value ok" id="mFastContext">0</div></div>
-          <div><div class="label">Fast Context 失败</div><div class="value bad" id="mFastContextFail">0</div></div>
+          <div><div class="label" data-i18n="metric.deepwikiOk">DeepWiki 成功</div><div class="value ok" id="mDeepWiki">0</div></div>
+          <div><div class="label" data-i18n="metric.deepwikiFail">DeepWiki 失败</div><div class="value bad" id="mDeepWikiFail">0</div></div>
+          <div><div class="label" data-i18n="metric.codemapOk">CodeMap 成功</div><div class="value ok" id="mCodeMap">0</div></div>
+          <div><div class="label" data-i18n="metric.codemapFail">CodeMap 失败</div><div class="value bad" id="mCodeMapFail">0</div></div>
+          <div><div class="label" data-i18n="metric.codemapFast">CodeMap Fast</div><div class="value" id="mCodeMapFast">0</div></div>
+          <div><div class="label" data-i18n="metric.codemapSmart">CodeMap Smart</div><div class="value" id="mCodeMapSmart">0</div></div>
+          <div><div class="label" data-i18n="metric.commitOk">Commit 成功</div><div class="value ok" id="mCommit">0</div></div>
+          <div><div class="label" data-i18n="metric.commitFail">Commit 失败</div><div class="value bad" id="mCommitFail">0</div></div>
+          <div><div class="label" data-i18n="metric.fastContextOk">Fast Context 成功</div><div class="value ok" id="mFastContext">0</div></div>
+          <div><div class="label" data-i18n="metric.fastContextFail">Fast Context 失败</div><div class="value bad" id="mFastContextFail">0</div></div>
         </div>
       </div>
       <div class="card">
-        <div class="card-h">功能模型排行</div>
-        <div id="featureModelRank" class="rank-list muted">暂无数据</div>
+        <div class="card-h" data-i18n="monitor.featureModelRank">功能模型排行</div>
+        <div id="featureModelRank" class="rank-list muted" data-i18n="state.noData">暂无数据</div>
       </div>
     </div>
 
     <div class="card log-card">
       <div class="card-h row-between">
-        <span>实时日志</span>
+        <span data-i18n="monitor.logs">实时日志</span>
         <span class="muted small" id="uptime">uptime —</span>
       </div>
       <div id="logBox" class="log-box mono"></div>
@@ -123,66 +123,66 @@
   <main id="page-models" class="page">
     <section class="hero row-between">
       <div>
-        <h1>模型配置</h1>
-        <p class="muted">按模型卡片管理 · 自动生成思考强度变体</p>
+        <h1 data-i18n="models.title">模型配置</h1>
+        <p class="muted" data-i18n="models.sub">按模型卡片管理 · 自动生成思考强度变体</p>
       </div>
-      <button class="btn btn-primary" onclick="openFamilyModal()">+ 添加模型</button>
+      <button class="btn btn-primary" onclick="openFamilyModal()" data-i18n="models.addFamily">+ 添加模型</button>
     </section>
     <div class="card feature-model-card">
-      <div class="card-h">功能模型绑定</div>
-      <p class="muted small">DeepWiki、CodeMap、Commit、Fast Context 各自绑定下方已有模型变体；保存后热重载。若此处不可见请重启 GUI/服务。</p>
+      <div class="card-h" data-i18n="models.featureBind.title">功能模型绑定</div>
+      <p class="muted small" data-i18n="models.featureBind.sub">DeepWiki、CodeMap、Commit、Fast Context 各自绑定下方已有模型变体；保存后热重载。若此处不可见请重启 GUI/服务。</p>
       <div class="feature-bind-grid" style="grid-template-columns:1fr 1fr;">
         <div class="feature-bind">
           <div class="feature-bind-title">DeepWiki</div>
           <div class="field">
-            <label>模型（思考强度变体）</label>
+            <label data-i18n="models.featureBind.deepwikiLabel">模型（思考强度变体）</label>
             <select id="deepwiki_model"></select>
           </div>
-          <div class="muted small" id="deepwiki_hint">生效：-</div>
+          <div class="muted small" id="deepwiki_hint" data-i18n="models.featureBind.active">生效：-</div>
         </div>
         <div class="feature-bind">
           <div class="feature-bind-title">CodeMap · Fast</div>
           <div class="field">
-            <label>快速模式模型</label>
+            <label data-i18n="models.featureBind.codemapFastLabel">快速模式模型</label>
             <select id="codemap_fast_model"></select>
           </div>
-          <div class="muted small" id="codemap_fast_hint">生效：-</div>
+          <div class="muted small" id="codemap_fast_hint" data-i18n="models.featureBind.active">生效：-</div>
         </div>
         <div class="feature-bind">
           <div class="feature-bind-title">CodeMap · Smart</div>
           <div class="field">
-            <label>智能模式模型</label>
+            <label data-i18n="models.featureBind.codemapSmartLabel">智能模式模型</label>
             <select id="codemap_smart_model"></select>
           </div>
-          <div class="muted small" id="codemap_smart_hint">生效：-</div>
+          <div class="muted small" id="codemap_smart_hint" data-i18n="models.featureBind.active">生效：-</div>
         </div>
         <div class="feature-bind">
-          <div class="feature-bind-title">Commit 消息</div>
+          <div class="feature-bind-title" data-i18n="models.featureBind.commitTitle">Commit 消息</div>
           <div class="field">
             <label>Generate Git Commit Message</label>
             <select id="command_model"></select>
           </div>
-          <div class="muted small" id="command_hint">生效：-</div>
+          <div class="muted small" id="command_hint" data-i18n="models.featureBind.active">生效：-</div>
         </div>
         <div class="feature-bind">
-          <div class="feature-bind-title">会话标题</div>
+          <div class="feature-bind-title" data-i18n="models.featureBind.titleTitle">会话标题</div>
           <div class="field">
-            <label>Title Generation (标题生成模型)</label>
+            <label data-i18n="models.featureBind.titleLabel">Title Generation (标题生成模型)</label>
             <select id="title_model"></select>
           </div>
-          <div class="muted small" id="title_hint">生效：-</div>
+          <div class="muted small" id="title_hint" data-i18n="models.featureBind.active">生效：-</div>
         </div>
         <div class="feature-bind">
           <div class="feature-bind-title">Fast Context</div>
           <div class="field">
-            <label>find_code_context / Instant Context（本地 fast_context_model）</label>
+            <label data-i18n="models.featureBind.fastContextLabel">find_code_context / Instant Context（本地 fast_context_model）</label>
             <select id="fast_context_model"></select>
           </div>
-          <div class="muted small" id="fast_context_hint">生效：-</div>
+          <div class="muted small" id="fast_context_hint" data-i18n="models.featureBind.active">生效：-</div>
         </div>
       </div>
       <div class="row gap" style="margin-top:8px">
-        <button class="btn btn-primary" onclick="saveFeatureModels()">保存绑定</button>
+        <button class="btn btn-primary" onclick="saveFeatureModels()" data-i18n="btn.saveBindings">保存绑定</button>
         <span class="muted small" id="featureModelResult"></span>
       </div>
     </div>
@@ -194,20 +194,20 @@
   <main id="page-prompts" class="page">
     <div class="page-head">
       <div>
-        <h1>系统提示词</h1>
-        <p class="muted">自定义提示词与侧栏扩展同步；另有固定内置英文工具提示（write/edit 优先）始终注入。服务启动安装扩展，停止时禁用。</p>
+        <h1 data-i18n="prompts.title">系统提示词</h1>
+        <p class="muted" data-i18n="prompts.sub">自定义提示词与侧栏扩展同步；另有固定内置英文工具提示（write/edit 优先）始终注入。服务启动安装扩展，停止时禁用。</p>
       </div>
       <div class="row gap">
-        <button class="btn btn-secondary" onclick="refreshPrompts()">刷新</button>
-        <button class="btn btn-primary" onclick="openPromptEditor()">+ 新建</button>
+        <button class="btn btn-secondary" onclick="refreshPrompts()" data-i18n="btn.refresh">刷新</button>
+        <button class="btn btn-primary" onclick="openPromptEditor()" data-i18n="btn.newPrompt">+ 新建</button>
       </div>
     </div>
     <div class="card" style="margin-bottom:12px">
-      <div class="card-h">扩展状态</div>
-      <div class="muted small" id="extStatus">检测中…</div>
+      <div class="card-h" data-i18n="prompts.extStatus.title">扩展状态</div>
+      <div class="muted small" id="extStatus" data-i18n="state.extChecking">检测中…</div>
       <div class="row gap" style="margin-top:8px">
-        <button class="btn btn-secondary" onclick="extAction('install')">安装/启用扩展</button>
-        <button class="btn btn-secondary" onclick="extAction('disable')">禁用扩展</button>
+        <button class="btn btn-secondary" onclick="extAction('install')" data-i18n="prompts.extInstall">安装/启用扩展</button>
+        <button class="btn btn-secondary" onclick="extAction('disable')" data-i18n="prompts.extDisable">禁用扩展</button>
       </div>
     </div>
     <div id="promptList" class="model-grid"></div>
@@ -216,52 +216,52 @@
   <!-- SETTINGS -->
   <main id="page-settings" class="page">
     <section class="hero">
-      <h1>设置</h1>
-      <p class="muted">供应商以外的运行策略（工具 / 流式 / 超时）</p>
+      <h1 data-i18n="settings.title">设置</h1>
+      <p class="muted" data-i18n="settings.sub">供应商以外的运行策略（工具 / 流式 / 超时）</p>
     </section>
     <section class="card local-account" aria-labelledby="localAccountTitle">
       <div class="row-between local-account-head">
         <div>
-          <div class="card-h" id="localAccountTitle">本地虚拟账户</div>
-          <div class="local-account-state" id="localAccountState">检测中…</div>
+          <div class="card-h" id="localAccountTitle" data-i18n="settings.localAccount.title">本地虚拟账户</div>
+          <div class="local-account-state" id="localAccountState" data-i18n="state.extChecking">检测中…</div>
         </div>
-        <span class="account-badge" id="localAccountBadge">未创建</span>
+        <span class="account-badge" id="localAccountBadge" data-i18n="state.notCreated">未创建</span>
       </div>
       <div class="account-fields" id="localAccountFields" hidden>
-        <div><span>名称</span><strong id="localAccountName">-</strong></div>
-        <div><span>邮箱</span><strong id="localAccountEmail">-</strong></div>
-        <div><span>账户 ID</span><strong id="localAccountID">-</strong></div>
-        <div><span>本地密钥</span><strong id="localAccountKey">-</strong></div>
+        <div><span data-i18n="settings.localAccount.name">名称</span><strong id="localAccountName">-</strong></div>
+        <div><span data-i18n="settings.localAccount.email">邮箱</span><strong id="localAccountEmail">-</strong></div>
+        <div><span data-i18n="settings.localAccount.id">账户 ID</span><strong id="localAccountID">-</strong></div>
+        <div><span data-i18n="settings.localAccount.key">本地密钥</span><strong id="localAccountKey">-</strong></div>
       </div>
       <div class="row gap local-account-actions">
-        <button class="btn btn-primary" id="btnImportLocalAccount" onclick="importLocalAccount()">一键创建并导入</button>
-        <button class="btn btn-secondary" id="btnRefreshLocalAccount" onclick="refreshLocalAccount()">刷新状态</button>
+        <button class="btn btn-primary" id="btnImportLocalAccount" onclick="importLocalAccount()" data-i18n="btn.importAccount">一键创建并导入</button>
+        <button class="btn btn-secondary" id="btnRefreshLocalAccount" onclick="refreshLocalAccount()" data-i18n="btn.refreshStatus">刷新状态</button>
       </div>
     </section>
 
     <section class="utility-band">
       <div>
-        <div class="card-h">数据与恢复</div>
-        <p>聊天导出保留 Devin 原始数据库及 WAL 文件；停止服务会恢复启用前的 Devin 设置。</p>
+        <div class="card-h" data-i18n="settings.data.title">数据与恢复</div>
+        <p data-i18n="settings.data.sub">聊天导出保留 Devin 原始数据库及 WAL 文件；停止服务会恢复启用前的 Devin 设置。</p>
         <div class="export-result" id="chatExportResult"></div>
       </div>
       <div class="row utility-actions">
-        <button class="btn btn-secondary" id="btnExportChats" onclick="exportChats()">导出聊天记录</button>
-        <button class="btn btn-danger" id="btnRestoreSettings" onclick="control('stop')">恢复 Devin 原配置</button>
+        <button class="btn btn-secondary" id="btnExportChats" onclick="exportChats()" data-i18n="btn.exportChats">导出聊天记录</button>
+        <button class="btn btn-danger" id="btnRestoreSettings" onclick="control('stop')" data-i18n="btn.restoreDevin">恢复 Devin 原配置</button>
       </div>
     </section>
     <div class="two-col">
       <div class="card">
-        <div class="card-h">说明</div>
-        <p class="muted">供应商（Base URL / API Key / 上游模型名）已改为在 <b>模型 → Family 卡片</b> 内配置，与 cursor-byok 一致：多模型，每个模型自带供应商。</p>
-        <div class="field"><label>全局默认超时 timeout_sec（Family 未单独设置时使用）</label><input id="timeout_sec" type="number"/></div>
+        <div class="card-h" data-i18n="settings.notes.title">说明</div>
+        <p class="muted" data-i18n-html="settings.notes.body">供应商（Base URL / API Key / 上游模型名）已改为在 <b>模型 → Family 卡片</b> 内配置，与 cursor-byok 一致：多模型，每个模型自带供应商。</p>
+        <div class="field"><label data-i18n="settings.notes.timeout">全局默认超时 timeout_sec（Family 未单独设置时使用）</label><input id="timeout_sec" type="number"/></div>
         <div class="row gap">
-          <button class="btn btn-primary" onclick="saveConfig()">保存策略</button>
+          <button class="btn btn-primary" onclick="saveConfig()" data-i18n="btn.savePolicy">保存策略</button>
         </div>
         <div class="muted small" id="upResult" style="margin-top:10px"></div>
       </div>
       <div class="card">
-        <div class="card-h">功能策略</div>
+        <div class="card-h" data-i18n="settings.policy.title">功能策略</div>
         <div class="field"><label>tools.mode</label>
           <select id="tools_mode">
             <option value="off">off</option>
@@ -270,45 +270,45 @@
             <option value="full">full</option>
           </select>
         </div>
-        <div class="field"><label>tools.timeout_sec（有工具时的聊天总超时，秒；命令/写入假流式保活依赖此值）</label><input id="tools_timeout_sec" type="number"/></div>
-        <div class="card-h" style="margin-top:12px">质量模式</div>
-        <label class="check"><input type="checkbox" id="quality_enabled" checked/> 启用可靠性提示词</label>
-        <div class="field"><label for="quality_mode">模式</label><select id="quality_mode"><option value="fast">fast</option><option value="balanced" selected>balanced</option><option value="verified">verified</option></select></div>
-        <div class="field"><label for="max_verification_rounds">最大验证轮数</label><input id="max_verification_rounds" type="number" min="1" value="1"/></div>
-        <label class="check"><input type="checkbox" id="enable_stream"/> 流式输出</label>
-        <label class="check"><input type="checkbox" id="enable_cascade_tools"/> Cascade 工具</label>
-        <label class="check"><input type="checkbox" id="pure_local" checked disabled/> 纯本地 pure_local（已强制：仅单机，混合模式已取消）</label>
+        <div class="field"><label data-i18n="settings.policy.toolsTimeout">tools.timeout_sec（有工具时的聊天总超时，秒；命令/写入假流式保活依赖此值）</label><input id="tools_timeout_sec" type="number"/></div>
+        <div class="card-h" style="margin-top:12px" data-i18n="settings.policy.quality">质量模式</div>
+        <label class="check"><input type="checkbox" id="quality_enabled" checked/> <span data-i18n="settings.policy.qualityEnabled">启用可靠性提示词</span></label>
+        <div class="field"><label for="quality_mode" data-i18n="settings.policy.qualityMode">模式</label><select id="quality_mode"><option value="fast">fast</option><option value="balanced" selected>balanced</option><option value="verified">verified</option></select></div>
+        <div class="field"><label for="max_verification_rounds" data-i18n="settings.policy.maxRounds">最大验证轮数</label><input id="max_verification_rounds" type="number" min="1" value="1"/></div>
+        <label class="check"><input type="checkbox" id="enable_stream"/> <span data-i18n="settings.policy.stream">流式输出</span></label>
+        <label class="check"><input type="checkbox" id="enable_cascade_tools"/> <span data-i18n="settings.policy.cascadeTools">Cascade 工具</span></label>
+        <label class="check"><input type="checkbox" id="pure_local" checked disabled/> <span data-i18n="settings.policy.pureLocal">纯本地 pure_local（已强制：仅单机，混合模式已取消）</span></label>
         <div class="row gap" style="margin-top:12px">
-          <button class="btn btn-primary" onclick="saveConfig()">保存策略</button>
+          <button class="btn btn-primary" onclick="saveConfig()" data-i18n="btn.savePolicy">保存策略</button>
         </div>
         <div class="muted small" id="cfgPath" style="margin-top:12px"></div>
       </div>
     </div>
   
     <div class="card" style="margin-top:16px">
-      <div class="card-h">桌面与自启</div>
-      <p class="muted small">开机自启、启动最小化到托盘、最小化时托盘化。启用会自动导入，停止会自动恢复。</p>
-      <label class="check"><input type="checkbox" id="desktop_autostart"/> 开机自动启动服务（start + apply）</label>
-      <label class="check"><input type="checkbox" id="desktop_start_minimized"/> 启动 GUI 时最小化到托盘</label>
-      <label class="check"><input type="checkbox" id="desktop_minimize_to_tray"/> 最小化窗口时隐藏到托盘</label>
+      <div class="card-h" data-i18n="settings.desktop.title">桌面与自启</div>
+      <p class="muted small" data-i18n="settings.desktop.sub">开机自启、启动最小化到托盘、最小化时托盘化。启用会自动导入，停止会自动恢复。</p>
+      <label class="check"><input type="checkbox" id="desktop_autostart"/> <span data-i18n="settings.desktop.autostart">开机自动启动服务（start + apply）</span></label>
+      <label class="check"><input type="checkbox" id="desktop_start_minimized"/> <span data-i18n="settings.desktop.startMinimized">启动 GUI 时最小化到托盘</span></label>
+      <label class="check"><input type="checkbox" id="desktop_minimize_to_tray"/> <span data-i18n="settings.desktop.minimizeToTray">最小化窗口时隐藏到托盘</span></label>
       <div class="row gap" style="margin-top:12px">
-        <button class="btn btn-primary" onclick="saveDesktopPrefs()">保存桌面设置</button>
-        <button class="btn btn-secondary" onclick="hideToTray()">立即隐藏到托盘</button>
+        <button class="btn btn-primary" onclick="saveDesktopPrefs()" data-i18n="btn.saveDesktop">保存桌面设置</button>
+        <button class="btn btn-secondary" onclick="hideToTray()" data-i18n="btn.hideToTray">立即隐藏到托盘</button>
         <span class="muted small" id="desktopResult"></span>
       </div>
     </div>
 
   
     <div class="card" style="margin-top:16px">
-      <div class="card-h">更新</div>
-      <p class="muted small">从 GitHub Releases 检查新版本。自动更新会下载 zip、校验 SHA256（若有）并替换 exe 后重启。</p>
-      <div class="muted small" id="updateStatus">当前版本加载中…</div>
-      <label class="check"><input type="checkbox" id="update_enabled"/> 启用在线检查</label>
-      <label class="check"><input type="checkbox" id="update_auto_apply"/> 检查到更新后自动应用（谨慎）</label>
+      <div class="card-h" data-i18n="settings.update.title">更新</div>
+      <p class="muted small" data-i18n="settings.update.sub">从 GitHub Releases 检查新版本。自动更新会下载 zip、校验 SHA256（若有）并替换 exe 后重启。</p>
+      <div class="muted small" id="updateStatus" data-i18n="state.versionLoading">当前版本加载中…</div>
+      <label class="check"><input type="checkbox" id="update_enabled"/> <span data-i18n="settings.update.enabled">启用在线检查</span></label>
+      <label class="check"><input type="checkbox" id="update_auto_apply"/> <span data-i18n="settings.update.autoApply">检查到更新后自动应用（谨慎）</span></label>
       <div class="field"><label>GitHub 仓库 owner/name</label><input id="update_repo" placeholder="cyberlieflife/devin-byok"/></div>
       <div class="row gap">
-        <button class="btn btn-secondary" id="btnCheckUpdate" onclick="checkUpdate()">检查更新</button>
-        <button class="btn btn-primary" id="btnApplyUpdate" onclick="applyUpdate()">下载并更新</button>
+        <button class="btn btn-secondary" id="btnCheckUpdate" onclick="checkUpdate()" data-i18n="btn.checkUpdate">检查更新</button>
+        <button class="btn btn-primary" id="btnApplyUpdate" onclick="applyUpdate()" data-i18n="btn.applyUpdate">下载并更新</button>
         <span class="muted small" id="updateResult"></span>
       </div>
     </div>
@@ -319,26 +319,26 @@
 <!-- modal -->
 <div class="modal-mask" id="familyModal" hidden>
   <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="familyModalTitle">
-    <div class="card-h" id="familyModalTitle">添加模型</div>
+    <div class="card-h" id="familyModalTitle" data-i18n="models.modal.addTitle">添加模型</div>
     <input type="hidden" id="f_uid" value=""/>
-    <div class="field"><label for="f_label">显示名 Label</label><input id="f_label" autocomplete="off" spellcheck="false" placeholder="Grok 4.5"/></div>
-    <div class="field"><label for="f_upstream">上游模型 ID</label><input id="f_upstream" autocomplete="off" spellcheck="false" placeholder="grok-4.5"/></div>
-    <div class="muted small" id="f_uid_hint">Family UID 将自动生成为：-</div>
-    <div class="field"><label>接口类型</label>
+    <div class="field"><label for="f_label" data-i18n="models.modal.label">显示名 Label</label><input id="f_label" autocomplete="off" spellcheck="false" placeholder="Grok 4.5"/></div>
+    <div class="field"><label for="f_upstream" data-i18n="models.modal.upstream">上游模型 ID</label><input id="f_upstream" autocomplete="off" spellcheck="false" placeholder="grok-4.5"/></div>
+    <div class="muted small" id="f_uid_hint" data-i18n="models.modal.uidHint">Family UID 将自动生成为：-</div>
+    <div class="field"><label data-i18n="models.modal.provider">接口类型</label>
       <select id="f_provider">
-        <option value="openai">OpenAI 兼容（/v1/chat/completions）</option>
-        <option value="responses">OpenAI Responses（/v1/responses）</option>
+        <option value="openai" data-i18n="models.modal.providerOpenai">OpenAI 兼容（/v1/chat/completions）</option>
+        <option value="responses" data-i18n="models.modal.providerResponses">OpenAI Responses（/v1/responses）</option>
         <option value="anthropic">Anthropic Messages</option>
       </select>
     </div>
     <div class="field"><label for="f_base">Base URL</label><input id="f_base" type="url" autocomplete="url" spellcheck="false" placeholder="http://localhost:8317/v1"/></div>
-    <div class="field"><label for="f_key">API Key（编辑时留空表示保留原 Key）</label><input id="f_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="sk-..."/></div>
+    <div class="field"><label for="f_key" data-i18n="models.modal.apiKey">API Key（编辑时留空表示保留原 Key）</label><input id="f_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="sk-..."/></div>
     <div class="field"><label for="f_ctx">context_window</label><input id="f_ctx" type="number" inputmode="numeric" value="128000"/></div>
-    <div class="field"><label for="f_max">max_tokens（输出）</label><input id="f_max" type="number" inputmode="numeric" value="8192"/></div>
-    <div class="field"><label for="f_thinking_type">Anthropic thinking</label><select id="f_thinking_type"><option value="">不启用</option><option value="enabled">enabled</option></select></div>
-    <div class="field"><label for="f_thinking_budget">thinking budget_tokens（小于 max_tokens）</label><input id="f_thinking_budget" type="number" inputmode="numeric" value="0"/></div>
-    <div class="field"><label for="f_thinking_param">OpenAI thinking 参数</label><input id="f_thinking_param" value="reasoning_effort"/></div>
-    <div class="field"><label>思考强度（可多选）</label>
+    <div class="field"><label for="f_max" data-i18n="models.modal.maxTokens">max_tokens（输出）</label><input id="f_max" type="number" inputmode="numeric" value="8192"/></div>
+    <div class="field"><label for="f_thinking_type">Anthropic thinking</label><select id="f_thinking_type"><option value="" data-i18n="models.modal.thinkingOff">不启用</option><option value="enabled">enabled</option></select></div>
+    <div class="field"><label for="f_thinking_budget" data-i18n="models.modal.thinkingBudget">thinking budget_tokens（小于 max_tokens）</label><input id="f_thinking_budget" type="number" inputmode="numeric" value="0"/></div>
+    <div class="field"><label for="f_thinking_param" data-i18n="models.modal.thinkingParam">OpenAI thinking 参数</label><input id="f_thinking_param" value="reasoning_effort"/></div>
+    <div class="field"><label data-i18n="models.modal.levels">思考强度（可多选）</label>
       <div class="chip-row" id="f_levels_box" style="margin-top:6px">
         <label class="check"><input type="checkbox" class="f-level" value="low" checked/> low</label>
         <label class="check"><input type="checkbox" class="f-level" value="medium" checked/> medium</label>
@@ -349,8 +349,8 @@
       </div>
     </div>
     <div class="row gap">
-      <button class="btn btn-primary" onclick="saveFamily()">保存模型</button>
-      <button class="btn btn-secondary" onclick="closeFamilyModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveFamily()" data-i18n="btn.saveFamily">保存模型</button>
+      <button class="btn btn-secondary" onclick="closeFamilyModal()" data-i18n="btn.cancel">取消</button>
     </div>
   </div>
 </div>
@@ -363,7 +363,7 @@
   <div class="footer-left">
     <span id="footerVersion">v1.0.0</span>
     <span class="footer-sep">·</span>
-    <span id="footerUpdate">等待检查…</span>
+    <span id="footerUpdate" data-i18n="state.waitingCheck">等待检查…</span>
   </div>
   <div class="footer-right">
     <div class="footer-progress" id="footerProgressWrap" hidden>
@@ -376,12 +376,12 @@
 <!-- 强制更新弹窗 -->
 <div class="modal-mask" id="updateModal" hidden>
   <div class="modal card update-modal">
-    <div class="card-h">发现新版本</div>
+    <div class="card-h" data-i18n="update.modal.title">发现新版本</div>
     <div class="muted small" id="updateModalVersions"></div>
     <pre class="update-notes" id="updateModalNotes"></pre>
     <div class="row gap" style="margin-top:14px;justify-content:flex-end">
-      <button class="btn btn-secondary" id="btnUpdateLater" onclick="dismissUpdateModal()">稍后</button>
-      <button class="btn btn-primary" id="btnUpdateNow" onclick="acceptUpdateAndDownload()">立即更新</button>
+      <button class="btn btn-secondary" id="btnUpdateLater" onclick="dismissUpdateModal()" data-i18n="btn.later">稍后</button>
+      <button class="btn btn-primary" id="btnUpdateNow" onclick="acceptUpdateAndDownload()" data-i18n="btn.updateNow">立即更新</button>
     </div>
   </div>
 </div>
