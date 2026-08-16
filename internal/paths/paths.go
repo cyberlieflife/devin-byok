@@ -3,6 +3,7 @@ package paths
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"devin-byok/internal/payload"
 	"devin-byok/internal/platform"
@@ -40,9 +41,16 @@ func CaptureDir() string {
 	return d
 }
 
+// looksLikeUntouchedExample 判定内容是否仍是"未配置的示例模板"：
+// 内置示例含占位域名 api.example.com；真实用户配置不会使用该域名。
+// 用于区分"升级时生成的示例"与"用户已修改的配置"，前者允许被 legacy 配置覆盖迁移。
+func looksLikeUntouchedExample(content string) bool {
+	return strings.Contains(content, "api.example.com")
+}
+
 // EnsureConfig ensures config.yaml exists.
 // Prefer existing non-template file; migrate once from legacy locations when the
-// target is missing or still an untouched embedded template; else write template.
+// target is missing or still an untouched example template; else write template.
 func EnsureConfig() (string, error) {
 	if _, err := EnsureDir(); err != nil {
 		return "", err
@@ -50,12 +58,18 @@ func EnsureConfig() (string, error) {
 	dst := ConfigPath()
 	dstIsTemplate := false
 	if st, err := os.Stat(dst); err == nil && !st.IsDir() && st.Size() > 0 {
-		if b, rerr := os.ReadFile(dst); rerr == nil && len(payload.ConfigExample) > 0 && string(b) == string(payload.ConfigExample) {
-			// 目标位置是未修改的内置模板：可能是升级时生成的示例，
-			// 下面仍尝试从历史位置迁移用户真实配置。
-			dstIsTemplate = true
+		b, rerr := os.ReadFile(dst)
+		if rerr == nil {
+			if (len(payload.ConfigExample) > 0 && string(b) == string(payload.ConfigExample)) ||
+				looksLikeUntouchedExample(string(b)) {
+				// 目标位置是未修改的内置模板或示例占位配置：可能是升级时生成的，
+				// 下面仍尝试从历史位置迁移用户真实配置。
+				dstIsTemplate = true
+			} else {
+				// 已存在且非模板：用户配置，直接使用。
+				return dst, nil
+			}
 		} else {
-			// 已存在且非模板：用户配置，直接使用。
 			return dst, nil
 		}
 	}
@@ -67,8 +81,8 @@ func EnsureConfig() (string, error) {
 		if err != nil || len(b) == 0 {
 			continue
 		}
-		// 跳过同样是内置模板的候选（避免把示例配置当用户配置迁移）。
-		if len(payload.ConfigExample) > 0 && string(b) == string(payload.ConfigExample) {
+		// 跳过同样是示例模板的候选（避免把占位配置当用户配置迁移）。
+		if looksLikeUntouchedExample(string(b)) {
 			continue
 		}
 		if err := os.WriteFile(dst, b, 0o644); err == nil {

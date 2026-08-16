@@ -40,14 +40,16 @@ func readFile(t *testing.T, path string) string {
 	return string(b)
 }
 
-// 目标位置已是内置模板时，应迁移历史位置的用户配置（升级路径修复）。
+// 目标位置已是示例模板（精确等于内嵌模板，或含占位域名 api.example.com 的旧示例）
+// 时，应迁移历史位置的用户配置（升级路径修复）。
 func TestEnsureConfigMigratesLegacyWhenTargetIsTemplate(t *testing.T) {
 	tmp := isolateDataDirs(t)
 	legacy := filepath.Join(tmp, ".devin-byok", "config.yaml")
 	writeFile(t, legacy, "upstream:\n  base_url: http://user.example/v1\n")
-	// 目标位置写入"未修改模板"（内容与内嵌示例一致）
+	// 目标位置写入"旧版本示例模板"（与当前内嵌模板不同，但含占位域名 api.example.com）
 	dst := paths.ConfigPath()
-	writeFile(t, dst, string(payload.ConfigExample))
+	oldExample := "server:\n  host: 127.0.0.1\n  port: 8787\nupstream:\n  base_url: https://api.example.com/v1\n  api_key: \"\"\n"
+	writeFile(t, dst, oldExample)
 
 	p, err := paths.EnsureConfig()
 	if err != nil {
@@ -57,7 +59,24 @@ func TestEnsureConfigMigratesLegacyWhenTargetIsTemplate(t *testing.T) {
 		t.Fatalf("path = %q, want %q", p, dst)
 	}
 	if got := readFile(t, dst); got != "upstream:\n  base_url: http://user.example/v1\n" {
-		t.Fatalf("template target was not replaced with legacy config: %q", got)
+		t.Fatalf("example target was not replaced with legacy config: %q", got)
+	}
+}
+
+// 目标为当前内嵌模板（精确相等）时同样迁移 legacy 配置。
+func TestEnsureConfigMigratesLegacyWhenTargetIsExactTemplate(t *testing.T) {
+	tmp := isolateDataDirs(t)
+	legacy := filepath.Join(tmp, ".devin-byok", "config.yaml")
+	writeFile(t, legacy, "legacy: true\n")
+	dst := paths.ConfigPath()
+	writeFile(t, dst, string(payload.ConfigExample))
+
+	p, err := paths.EnsureConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, p); got != "legacy: true\n" {
+		t.Fatalf("exact template target was not migrated: %q", got)
 	}
 }
 
