@@ -243,7 +243,7 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "saved but reload failed: "+err.Error(), 500)
 			return
 		}
-		writeJSON(w, map[string]any{"ok": true, "message": "已保存并热重载"})
+		writeJSON(w, map[string]any{"ok": true, "message": uiMsg(langFromRequest(r), "msg.savedAndReloaded")})
 	default:
 		http.Error(w, "method not allowed", 405)
 	}
@@ -295,7 +295,7 @@ func (s *Server) handleAPITestUpstream(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"ok": true, "text": text})
 }
 
-func localAccountResponse(cfg *config.File, account *devin.LocalAccount, created bool) map[string]any {
+func localAccountResponse(lang string, cfg *config.File, account *devin.LocalAccount, created bool) map[string]any {
 	response := map[string]any{
 		"ok":             true,
 		"created":        created,
@@ -305,7 +305,7 @@ func localAccountResponse(cfg *config.File, account *devin.LocalAccount, created
 		"account_path":   devin.LocalAccountPath(),
 	}
 	if account == nil {
-		response["message"] = "尚未创建本地虚拟账户"
+		response["message"] = uiMsg(lang, "msg.accountNotCreated")
 		return response
 	}
 	wrapperPath := filepath.Join(platform.DataDir(), "bin", platform.WrapperExeName())
@@ -347,38 +347,39 @@ func (s *Server) handleAPILocalAccount(w http.ResponseWriter, r *http.Request) {
 		account, err := devin.LoadLocalAccount()
 		if err != nil {
 			if os.IsNotExist(err) {
-				writeJSON(w, localAccountResponse(s.GetConfig(), nil, false))
+				writeJSON(w, localAccountResponse(langFromRequest(r), s.GetConfig(), nil, false))
 				return
 			}
 			writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
 			return
 		}
-		writeJSON(w, localAccountResponse(s.GetConfig(), account, false))
+		writeJSON(w, localAccountResponse(langFromRequest(r), s.GetConfig(), account, false))
 	case http.MethodPost:
 		account, created, err := devin.EnsureLocalAccount()
 		if err != nil {
 			writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
 			return
 		}
+		lang := langFromRequest(r)
 		cfg, err := devin.ApplyLocalAccountToConfig(s.getConfigPath(), account)
 		if err != nil {
-			writeJSON(w, map[string]any{"ok": false, "message": "保存本地账户失败: " + err.Error()})
+			writeJSON(w, map[string]any{"ok": false, "message": uiMsg(lang, "msg.saveAccountFailed", err.Error())})
 			return
 		}
 		if err := applyLocalRuntime(cfg); err != nil {
 			writeJSON(w, map[string]any{
 				"ok": false, "created": created,
-				"message": "账户已创建，但导入 Devin 失败: " + err.Error(),
+				"message": uiMsg(lang, "msg.importFailed", err.Error()),
 			})
 			return
 		}
 		if err := s.ReloadConfig(); err != nil {
-			writeJSON(w, map[string]any{"ok": false, "message": "已导入，但配置重载失败: " + err.Error()})
+			writeJSON(w, map[string]any{"ok": false, "message": uiMsg(lang, "msg.importedReloadFailed", err.Error())})
 			return
 		}
 		s.restartRequired.Store(true)
-		response := localAccountResponse(cfg, account, created)
-		response["message"] = "本地虚拟账户已导入，请完全退出并重启 Devin"
+		response := localAccountResponse(lang, cfg, account, created)
+		response["message"] = uiMsg(lang, "msg.accountImportedRestart")
 		writeJSON(w, response)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -429,42 +430,43 @@ func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	action := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/control/"), "/")
+	lang := langFromRequest(r)
 	cfg := s.GetConfig()
 	switch action {
 	case "start":
 		account, _, err := devin.EnsureLocalAccount()
 		if err != nil {
-			writeJSON(w, map[string]any{"ok": false, "message": "创建本地账户失败: " + err.Error()})
+			writeJSON(w, map[string]any{"ok": false, "message": uiMsg(lang, "msg.createAccountFailed", err.Error())})
 			return
 		}
 		cfg, err = devin.ApplyLocalAccountToConfig(s.getConfigPath(), account)
 		if err != nil {
-			writeJSON(w, map[string]any{"ok": false, "message": "保存本地账户失败: " + err.Error()})
+			writeJSON(w, map[string]any{"ok": false, "message": uiMsg(lang, "msg.saveAccountFailed", err.Error())})
 			return
 		}
 		if err := applyLocalRuntime(cfg); err != nil {
-			writeJSON(w, map[string]any{"ok": false, "message": "apply 失败: " + err.Error()})
+			writeJSON(w, map[string]any{"ok": false, "message": uiMsg(lang, "msg.applyFailed", err.Error())})
 			return
 		}
 		if err := s.ReloadConfig(); err != nil {
-			writeJSON(w, map[string]any{"ok": false, "message": "已启用，但配置重载失败: " + err.Error()})
+			writeJSON(w, map[string]any{"ok": false, "message": uiMsg(lang, "msg.enabledReloadFailed", err.Error())})
 			return
 		}
 		s.restartRequired.Store(true)
-		writeJSON(w, map[string]any{"ok": true, "message": "本地服务和虚拟账户已启用，请重启 Devin 生效"})
+		writeJSON(w, map[string]any{"ok": true, "message": uiMsg(lang, "msg.serviceEnabledRestart")})
 	case "install-wrapper", "install_wrapper":
 		meta, err := lsinstall.Install(cfg.Devin.InstallDir)
 		if err != nil {
 			writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
 			return
 		}
-		writeJSON(w, map[string]any{"ok": true, "message": "wrapper 已安装", "target": meta.Target, "real": meta.Real})
+		writeJSON(w, map[string]any{"ok": true, "message": uiMsg(lang, "msg.wrapperInstalled"), "target": meta.Target, "real": meta.Real})
 	case "uninstall-wrapper", "uninstall_wrapper":
 		if err := lsinstall.Uninstall(cfg.Devin.InstallDir); err != nil {
 			writeJSON(w, map[string]any{"ok": false, "message": err.Error()})
 			return
 		}
-		writeJSON(w, map[string]any{"ok": true, "message": "wrapper 已卸载还原"})
+		writeJSON(w, map[string]any{"ok": true, "message": uiMsg(lang, "msg.wrapperUninstalled")})
 	case "stop":
 		// 保存计数、restore settings、禁用提示词扩展、清空日志
 		MetricsSave()
@@ -481,7 +483,7 @@ func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
 			logx.Infof("control stop restore ok")
 		}
 		s.restartRequired.Store(false)
-		writeJSON(w, map[string]any{"ok": true, "message": "BYOK 已停止，Devin 原配置已恢复；管理窗口仍可使用"})
+		writeJSON(w, map[string]any{"ok": true, "message": uiMsg(lang, "msg.serviceStopped")})
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
