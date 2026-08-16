@@ -55,6 +55,10 @@ jobs:
       - name: i18n consistency check
         run: node scripts/check-i18n.mjs
 
+      # 前端 i18n 运行时核心（语言解析/切换链路）单元测试
+      - name: i18n runtime test
+        run: node scripts/test-i18n.mjs
+
       - name: Test race
         run: go test -race ./internal/...
 

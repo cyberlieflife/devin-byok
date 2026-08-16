@@ -53,11 +53,34 @@ for (const k of Object.keys(zh)) {
   }
 }
 
-// 4. index.html 行级中文残留（跳过含 data-i18n 的行与注释行）
-for (const line of htmlSrc.split('\n')) {
-  if (line.includes('data-i18n')) continue;
-  if (line.includes('<!--')) continue;
-  if (/[\u4e00-\u9fff]/.test(line)) errors.push(`index.html 未本地化中文: ${line.trim().slice(0, 90)}`);
+// 4. index.html 元素级中文残留：逐元素扫描，跳过带 data-i18n*（含 data-i18n-js
+//    动态接管标记）的元素、以及位于 data-i18n-html 父元素内的内容；注释已预先剔除。
+{
+  const htmlNoComment = htmlSrc.replace(/<!--[\s\S]*?-->/g, '');
+  const tokenRe = /<(\/)?([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>|([^<]+)/g;
+  const stack = [];
+  const hasI18nHtmlAncestor = () => stack.some(e => e.i18nHtml);
+  for (const mm of htmlNoComment.matchAll(tokenRe)) {
+    if (mm[0].startsWith('<')) {
+      const closing = mm[1], tag = mm[2], attrs = mm[3] || '', selfClose = mm[4];
+      if (closing) {
+        const top = stack.pop();
+        if (top && !top.i18n && !top.i18nHtml && !hasI18nHtmlAncestor() && /[\u4e00-\u9fff]/.test(top.text)) {
+          errors.push(`index.html 未本地化元素 <${top.tag}>: ${top.text.trim().slice(0, 60)}`);
+        }
+      } else {
+        stack.push({
+          tag,
+          i18n: /data-i18n(?:-html|-placeholder|-title)?=|data-i18n-js\b/.test(attrs),
+          i18nHtml: /data-i18n-html=/.test(attrs),
+          text: '',
+        });
+        if (selfClose) stack.pop();
+      }
+    } else if (stack.length) {
+      stack[stack.length - 1].text += mm[0];
+    }
+  }
 }
 
 // 5. app.js 行级中文残留（跳过注释、t() 调用、正则字面量）
@@ -67,6 +90,28 @@ for (const line of appSrc.split('\n')) {
   if (t.includes("t('") || t.includes('t("')) continue;
   if (/\/[^/]*[\u4e00-\u9fff][^/]*\//.test(t)) continue; // 正则字面量（中英双匹配关键词）
   if (/[\u4e00-\u9fff]/.test(t)) errors.push(`app.js 未本地化中文: ${t.slice(0, 90)}`);
+}
+
+// 6. ui.go 中 uiMsg 引用的 key 必须存在于 lang.go 的 uiMessages 字典
+{
+  const goUISrc = fs.readFileSync(path.join(ROOT, 'internal', 'localapi', 'ui.go'), 'utf8');
+  const langGoSrc = fs.readFileSync(path.join(ROOT, 'internal', 'localapi', 'lang.go'), 'utf8');
+  const dictKeysGo = new Set([...langGoSrc.matchAll(/"msg\.[^"]+"/g)].map(m => m[0].slice(1, -1)));
+  for (const mm of goUISrc.matchAll(/uiMsg\([^,]+,\s*"([^"]+)"/g)) {
+    if (!dictKeysGo.has(mm[1])) errors.push(`ui.go uiMsg 引用缺失字典 key: ${mm[1]}`);
+  }
+  // 字典中的 key 若从未被引用则提示（避免死条目）
+  for (const k of dictKeysGo) {
+    if (!goUISrc.includes(`"${k}"`)) errors.push(`lang.go 字典 key 未被 ui.go 引用: ${k}`);
+  }
+}
+
+// 7. i18n.js 内 t() 动态拼接键（如 t('lang.toast.' + lang)）候选键校验
+for (const mm of i18nSrc.matchAll(/(?<![A-Za-z])t\('([^']+)'\s*\+\s*([A-Za-z_][A-Za-z0-9_]*)/g)) {
+  const prefix = mm[1], varName = mm[2];
+  for (const cand of ['zh', 'en']) {
+    if (!(prefix + cand in zh)) errors.push(`i18n.js 动态键 t('${prefix}'+${varName}) 候选 ${prefix + cand} 缺失`);
+  }
 }
 
 if (errors.length) {
