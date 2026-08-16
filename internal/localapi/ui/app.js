@@ -1060,3 +1060,5 @@ refreshAll();
 startUpdateAutoCheck();
 setInterval(refreshMetrics, 2000);
 ['f_label','f_upstream'].forEach(id=>{ const el=document.getElementById(id); if(el){ el.addEventListener('input', refreshUidHint); }});
+// 语言切换后重刷动态渲染区域（静态 data-i18n 由 i18n.applyLang 处理）
+document.addEventListener('i18n:changed', () => refreshAll());
