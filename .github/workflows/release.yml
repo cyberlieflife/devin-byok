@@ -93,10 +93,18 @@ jobs:
         run: |
           set -euo pipefail
           TAG=${GITHUB_REF_NAME}
+          VER=${TAG#v}
           ASSETS=()
           for f in dist-artifacts/devin-byok-*; do
             ASSETS+=("$f")
           done
           echo "Releasing ${TAG} with ${#ASSETS[@]} assets"
-          # 不用 || true：发布失败必须让 job 标红，否则用户无感知
-          gh release create "${TAG}" "${ASSETS[@]}" --title "${TAG}" --generate-notes
+          # 优先使用 CHANGELOG.md 中当前版本的条目作为 release notes：
+          # 从 "## [vX.Y.Z]" 提取到下一个 "## [v" 版本标题之前（含标题行）。
+          BODY=$(awk -v tag="## [v${VER}]" 'index($0, tag)==1 {f=1} f && index($0, tag)!=1 && /^## \[v/ {exit} f' CHANGELOG.md)
+          if [ -n "$BODY" ]; then
+            gh release create "${TAG}" "${ASSETS[@]}" --title "${TAG}" --notes "$BODY"
+          else
+            # CHANGELOG 缺条目时回退到自动生成
+            gh release create "${TAG}" "${ASSETS[@]}" --title "${TAG}" --generate-notes
+          fi
