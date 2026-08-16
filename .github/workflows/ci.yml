@@ -51,6 +51,10 @@ jobs:
           go test ./internal/...
           go test ./cmd/devin-byok ./cmd/ls-wrapper ./cmd/prompt-eval
 
+      # 前端 i18n 一致性门禁：字典对称、HTML/JS 引用覆盖、界面中文残留
+      - name: i18n consistency check
+        run: node scripts/check-i18n.mjs
+
       - name: Test race
         run: go test -race ./internal/...
 
