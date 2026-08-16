@@ -483,6 +483,11 @@ func (s *Server) handleAPIControl(w http.ResponseWriter, r *http.Request) {
 			logx.Infof("control stop restore ok")
 		}
 		s.restartRequired.Store(false)
+		// 用户显式「停止并恢复」（?reset=1）：清除启用标记，下次启动不再自动启用。
+		// 缺省（如 GUI 退出时自动停止）保留标记，下次打开 GUI 自动恢复启用。
+		if r.URL.Query().Get("reset") == "1" {
+			_ = os.Remove(filepath.Join(platform.DataDir(), "last-apply.json"))
+		}
 		writeJSON(w, map[string]any{"ok": true, "message": uiMsg(lang, "msg.serviceStopped")})
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()

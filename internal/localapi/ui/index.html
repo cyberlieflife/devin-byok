@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"/>
@@ -42,7 +42,7 @@
       </div>
       <div class="service-actions">
         <button class="btn btn-primary btn-main-action" id="btnServiceStart" onclick="control('start')" data-i18n="btn.start">启用并一键导入</button>
-        <button class="btn btn-danger" id="btnServiceStop" onclick="control('stop')" data-i18n="btn.stop">停止并恢复</button>
+        <button class="btn btn-danger" id="btnServiceStop" onclick="control('stop',{reset:true})" data-i18n="btn.stop">停止并恢复</button>
         <button class="btn btn-secondary" id="btnRestartDevin" onclick="restartDevin()" data-i18n="btn.restartDevin">重启 Devin</button>
       </div>
       <div class="service-facts">
@@ -249,7 +249,7 @@
       </div>
       <div class="row utility-actions">
         <button class="btn btn-secondary" id="btnExportChats" onclick="exportChats()" data-i18n="btn.exportChats">导出聊天记录</button>
-        <button class="btn btn-danger" id="btnRestoreSettings" onclick="control('stop')" data-i18n="btn.restoreDevin">恢复 Devin 原配置</button>
+        <button class="btn btn-danger" id="btnRestoreSettings" onclick="control('stop',{reset:true})" data-i18n="btn.restoreDevin">恢复 Devin 原配置</button>
       </div>
     </section>
     <div class="two-col">

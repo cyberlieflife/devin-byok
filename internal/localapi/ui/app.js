@@ -298,12 +298,14 @@ async function saveConfig(){
   try{ const res=await jsend('/api/config','PUT',formPatch()); toast(res.message||t('toast.saved')); await refreshAll(); }
   catch(e){ toast(t('toast.saveFailed')+': '+e.message) }
 }
-async function control(action){
+async function control(action, opts){
+  opts = opts || {};
   const button=document.getElementById(action==='start'?'btnServiceStart':'btnServiceStop');
   const original=button?button.textContent:'';
   if(button){ button.disabled=true; button.textContent=action==='start'?t('state.enabling'):t('state.restoring'); }
   try{
-    const res=await jsend('/api/control/'+action,'POST');
+    // opts.reset=true 表示用户显式停止并恢复（清除启用标记，下次启动不再自动启用）
+    const res=await jsend('/api/control/'+action+(opts.reset?'?reset=1':''),'POST');
     if(res.ok===false) throw new Error(res.message||t('error.operationFailed'));
     toast(res.message||action);
     await refreshAll();

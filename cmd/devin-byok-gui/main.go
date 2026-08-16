@@ -69,6 +69,16 @@ func main() {
 	}
 	waitAPI(80)
 
+	// 上次处于启用状态（last-apply.json 存在）：启动后自动重新启用，
+	// 免去每次打开 GUI 都需手动点击「启用并一键导入」。
+	// 用户显式「停止并恢复」会清除该标记，此后不再自动启用。
+	if _, err := os.Stat(filepath.Join(platform.DataDir(), "last-apply.json")); err == nil {
+		go func() {
+			time.Sleep(600 * time.Millisecond)
+			_ = postControl("start")
+		}()
+	}
+
 	uiURL := "http://127.0.0.1:8787/ui/"
 
 	w := guiCreateWindow(uiURL)

@@ -443,6 +443,8 @@ func RestorePortal() (*RestoreResult, error) {
 		removeBackup(curBak)
 	}
 	res.Notes = append(res.Notes, "请重启 Devin 使 language_server 重新拉起")
-	_ = os.Remove(metaPath)
+	// 保留 last-apply.json 作为"用户曾启用"的持久标记：
+	// GUI 下次启动据此自动恢复启用状态；用户显式「停止并恢复」（reset=1）
+	// 时由调用方删除该标记，此后不再自动启用。
 	return res, nil
 }
