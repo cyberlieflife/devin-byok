@@ -64,7 +64,9 @@ var uiMessages = map[string]map[string]string{
 }
 
 // uiMsg 按语言取 message 并用 args 填充 %s 占位符；未知 key 回退 key 本身。
-// 占位符数量与实参不匹配时返回原文，避免 fmt.Sprintf 产生 %! 格式错乱。
+// 占位符用字面替换（strings.Replace）而非 fmt.Sprintf：只处理 %s 字面量，
+// 文案中的裸 % 不会被解释为格式化动词（杜绝 %!(NOVERB) 一类错乱），
+// 多余的实参被忽略、缺失的 %s 原样保留。
 func uiMsg(lang, key string, args ...any) string {
 	m, ok := uiMessages[key]
 	if !ok {
@@ -75,16 +77,17 @@ func uiMsg(lang, key string, args ...any) string {
 		s = m["zh"]
 	}
 	if len(args) > 0 {
-		if strings.Count(s, "%s") != len(args) {
-			return s
+		for _, a := range args {
+			s = strings.Replace(s, "%s", fmt.Sprint(a), 1)
 		}
-		return fmt.Sprintf(s, args...)
 	}
 	return s
 }
 
 // langFromRequest 从 X-Lang 请求头或 Accept-Language 推导界面语言。
-// 规则与前端一致：zh 前缀 → zh，其余语言 → en；无任何标识时默认 zh（保持向后兼容）。
+// 规则：zh 前缀 → zh，其余语言 → en；两者都缺失时默认 zh。
+// 注意：默认 zh 仅服务于非浏览器客户端（CLI/curl 等无语言标识的调用方，保持历史行为）；
+// 浏览器/WebView 前端恒带 X-Lang 头（见 app.js jget/jsend），不受该默认值影响。
 func langFromRequest(r *http.Request) string {
 	if r == nil {
 		return "zh"

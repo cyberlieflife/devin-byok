@@ -43,16 +43,25 @@ func TestUIMsg(t *testing.T) {
 	if got := uiMsg("en", "msg.unknown.key"); got != "msg.unknown.key" {
 		t.Errorf("uiMsg(unknown) = %q, want key itself", got)
 	}
-	// 占位符数量与实参不匹配时返回原文（避免 %! 错乱）
+	// 占位符替换：实参缺失时 %s 原样保留；实参多余时忽略多余参数
 	if got := uiMsg("en", "msg.saveAccountFailed"); got != "Failed to save local account: %s" {
 		t.Errorf("uiMsg(en, no arg) = %q, want raw template", got)
 	}
-	if got := uiMsg("zh", "msg.saveAccountFailed", "a", "b"); got != "保存本地账户失败: %s" {
-		t.Errorf("uiMsg(zh, 2 args) = %q, want raw template", got)
+	if got := uiMsg("zh", "msg.saveAccountFailed", "a", "b"); got != "保存本地账户失败: a" {
+		t.Errorf("uiMsg(zh, 2 args) = %q, want first placeholder replaced and extra arg ignored", got)
 	}
-	// 文案含裸 % 且不传参时原样返回（防御新增文案）
-	if got := uiMsg("zh", "msg.accountNotCreated"); got != "尚未创建本地虚拟账户" {
-		t.Errorf("uiMsg(zh, no-pct) = %q", got)
+	// 文案含裸 %（非占位符）：不传参与传参都必须原样返回，不得产生 %! 格式错乱。
+	// 临时注入一条含裸 % 的文案，用后即删。
+	uiMessages["msg.testRawPct"] = map[string]string{
+		"zh": "缓存命中率 50%（当前模型 %s）",
+		"en": "Cache hit rate 50% (model %s)",
+	}
+	defer delete(uiMessages, "msg.testRawPct")
+	if got := uiMsg("zh", "msg.testRawPct", "grok"); got != "缓存命中率 50%（当前模型 grok）" {
+		t.Errorf("uiMsg(zh, raw-pct + 1 arg) = %q", got)
+	}
+	if got := uiMsg("zh", "msg.testRawPct"); got != "缓存命中率 50%（当前模型 %s）" {
+		t.Errorf("uiMsg(zh, raw-pct + no arg) = %q, want raw template", got)
 	}
 }
 
