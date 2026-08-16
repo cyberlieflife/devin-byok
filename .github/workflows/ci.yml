@@ -40,10 +40,25 @@ jobs:
       - name: Build (non-GUI packages)
         run: go build ./internal/... ./cmd/devin-byok ./cmd/ls-wrapper ./cmd/prompt-eval
 
+      # 完整构建门禁：./... 覆盖所有包，能拦住仓库根目录误入的草稿包
+      # （Linux 跳过：GUI 依赖 systray 系统库）
+      - name: Build all packages
+        if: runner.os != 'Linux'
+        run: go build ./...
+
       - name: Test
         run: |
           go test ./internal/...
           go test ./cmd/devin-byok ./cmd/ls-wrapper ./cmd/prompt-eval
+
+      - name: Test race
+        run: go test -race ./internal/...
+
+      - name: go mod tidy check
+        if: runner.os == 'Linux'
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
 
       - name: Build GUI (darwin)
         if: runner.os == 'macOS'
