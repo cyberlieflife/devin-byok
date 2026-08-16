@@ -59,6 +59,10 @@ jobs:
       - name: i18n runtime test
         run: node scripts/test-i18n.mjs
 
+      # 前端 app.js 顶层执行回归（防止全局 t 未暴露导致界面失效）
+      - name: app.js top-level smoke
+        run: node scripts/test-appjs.mjs
+
       - name: Test race
         run: go test -race ./internal/...
 
