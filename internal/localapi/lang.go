@@ -64,6 +64,7 @@ var uiMessages = map[string]map[string]string{
 }
 
 // uiMsg 按语言取 message 并用 args 填充 %s 占位符；未知 key 回退 key 本身。
+// 占位符数量与实参不匹配时返回原文，避免 fmt.Sprintf 产生 %! 格式错乱。
 func uiMsg(lang, key string, args ...any) string {
 	m, ok := uiMessages[key]
 	if !ok {
@@ -74,6 +75,9 @@ func uiMsg(lang, key string, args ...any) string {
 		s = m["zh"]
 	}
 	if len(args) > 0 {
+		if strings.Count(s, "%s") != len(args) {
+			return s
+		}
 		return fmt.Sprintf(s, args...)
 	}
 	return s

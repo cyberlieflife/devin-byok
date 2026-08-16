@@ -43,6 +43,17 @@ func TestUIMsg(t *testing.T) {
 	if got := uiMsg("en", "msg.unknown.key"); got != "msg.unknown.key" {
 		t.Errorf("uiMsg(unknown) = %q, want key itself", got)
 	}
+	// 占位符数量与实参不匹配时返回原文（避免 %! 错乱）
+	if got := uiMsg("en", "msg.saveAccountFailed"); got != "Failed to save local account: %s" {
+		t.Errorf("uiMsg(en, no arg) = %q, want raw template", got)
+	}
+	if got := uiMsg("zh", "msg.saveAccountFailed", "a", "b"); got != "保存本地账户失败: %s" {
+		t.Errorf("uiMsg(zh, 2 args) = %q, want raw template", got)
+	}
+	// 文案含裸 % 且不传参时原样返回（防御新增文案）
+	if got := uiMsg("zh", "msg.accountNotCreated"); got != "尚未创建本地虚拟账户" {
+		t.Errorf("uiMsg(zh, no-pct) = %q", got)
+	}
 }
 
 // langFromRequest：X-Lang 优先，其次 Accept-Language，默认 zh。
@@ -55,8 +66,11 @@ func TestLangFromRequest(t *testing.T) {
 	}{
 		{"x-lang en", "en", "zh-CN", "en"},
 		{"x-lang zh", "zh", "en-US", "zh"},
+		{"x-lang uppercase", "EN", "zh-CN", "en"},
+		{"x-lang padded", " EN ", "zh-CN", "en"},
 		{"x-lang invalid falls back to accept", "fr", "zh-CN,zh;q=0.9", "zh"},
 		{"accept zh", "", "zh-CN,zh;q=0.9", "zh"},
+		{"accept zh uppercase", "", "ZH-cn", "zh"},
 		{"accept en", "", "en-US,en;q=0.9", "en"},
 		{"accept other", "", "ja-JP", "en"},
 		{"no header", "", "", "zh"},
