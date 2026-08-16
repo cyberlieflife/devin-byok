@@ -53,9 +53,10 @@ func New(cfg *config.File, captureDir string) *Server {
 	}
 	if cfg != nil && cfg.Capture.Enabled && captureDir != "" {
 		s.captureOn = true
-		_ = os.MkdirAll(captureDir, 0o755)
+		logx.Warnf("RPC capture enabled: full request bodies will be written to %s", captureDir)
+		_ = os.MkdirAll(captureDir, 0o700)
 		bodyDir := filepath.Join(captureDir, "bodies")
-		_ = os.MkdirAll(bodyDir, 0o755)
+		_ = os.MkdirAll(bodyDir, 0o700)
 		s.rpcLog = filepath.Join(captureDir, "localapi-rpc.jsonl")
 		s.bodyDir = bodyDir
 		s.rpcRotator = logx.NewRotatingWriter(s.rpcLog, 32<<20, 3)
@@ -341,7 +342,7 @@ func (s *Server) serveRPC(w http.ResponseWriter, r *http.Request) {
 			"body_len":  len(raw),
 			"plain_len": len(body),
 			"body_b64":  truncateB64(raw, 2048),
-			"strings":   extractStrings(body, 12),
+			"strings":   redactStrings(extractStrings(body, 12)),
 		}
 		s.appendRPC(rec)
 	}
@@ -1411,7 +1412,7 @@ func (s *Server) dumpBody(method string, raw []byte) {
 		return
 	}
 	name := fmt.Sprintf("%s_%d.bin", sanitize(method), time.Now().UnixNano())
-	_ = os.WriteFile(filepath.Join(s.bodyDir, name), raw, 0o644)
+	_ = os.WriteFile(filepath.Join(s.bodyDir, name), raw, 0o600)
 }
 
 func (s *Server) appendRPC(rec map[string]any) {
@@ -1430,7 +1431,7 @@ func (s *Server) appendRPC(rec map[string]any) {
 		return
 	}
 	// fallback
-	f, err := os.OpenFile(s.rpcLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(s.rpcLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}

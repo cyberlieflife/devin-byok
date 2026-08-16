@@ -42,12 +42,12 @@ func (w *RotatingWriter) Write(p []byte) (int, error) {
 	defer w.mu.Unlock()
 
 	if w.file == nil {
-		_ = os.MkdirAll(filepath.Dir(w.path), 0o755)
+		_ = os.MkdirAll(filepath.Dir(w.path), 0o700)
 		st, err := os.Stat(w.path)
 		if err == nil {
 			w.currSize = st.Size()
 		}
-		f, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		f, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {
 			return 0, err
 		}
@@ -84,7 +84,7 @@ func (w *RotatingWriter) rotateLocked() {
 	_ = os.Rename(w.path, w.path+".1")
 	_ = os.Remove(w.path + "." + itoa(w.keep+1))
 
-	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err == nil {
 		w.file = f
 		w.currSize = 0
