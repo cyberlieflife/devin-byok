@@ -1,4 +1,4 @@
-﻿package extinstall
+package extinstall
 
 import (
 	"encoding/json"
@@ -92,11 +92,109 @@ func InstallFromFS(src fs.FS, root string) (string, error) {
 	}
 	// 确保未标记 obsolete
 	_ = clearObsolete(base, ExtID)
-	if err := registerExtensionsJSON(base, dst); err != nil {
+	if err := registerExtensionsJSON(base, dst, ExtID, Version, FolderName()); err != nil {
 		logx.Warnf("ext register json: %v", err)
 	}
 	logx.Infof("extension installed: %s", dst)
 	return dst, nil
+}
+
+// ---- Codeium.codeium-dev 扩展壳 ----
+// Devin 扩展的 hasDevExtension()（extensions.getExtension("Codeium.codeium-dev")
+// 是否存在）决定 getConfig() 是否读取 codeiumDev.* 开发配置。macOS 因签名
+// bundle 不可替换，必须走 codeiumDev.languageServerBinaryPath 覆盖链路，
+// 因此需要这个最小扩展壳（仅 package.json 声明 publisher/name，无需代码）。
+
+const (
+	DevShellPublisher = "Codeium"
+	DevShellName     = "codeium-dev"
+	DevShellVersion  = "0.0.1"
+	// DevShellExtID 扩展 id（Codeium.codeium-dev）。
+	DevShellExtID = DevShellPublisher + "." + DevShellName
+)
+
+// DevShellFolderName 磁盘目录名 publisher.name-version。
+func DevShellFolderName() string {
+	return fmt.Sprintf("%s.%s-%s", DevShellPublisher, DevShellName, DevShellVersion)
+}
+
+func devShellPackageJSON() []byte {
+	return []byte(`{
+  "name": "codeium-dev",
+  "displayName": "Codeium Dev",
+  "publisher": "Codeium",
+  "version": "0.0.1",
+  "description": "Development shell enabling codeiumDev.* settings for the Devin BYOK local service.",
+  "engines": { "vscode": "^1.60.0" }
+}
+`)
+}
+
+// InstallDevShell 安装 Codeium.codeium-dev 扩展壳并注册 extensions.json。
+func InstallDevShell() (string, error) {
+	base := UserExtensionsDir()
+	if base == "" {
+		return "", fmt.Errorf("无法解析用户主目录")
+	}
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return "", err
+	}
+	dst := filepath.Join(base, DevShellFolderName())
+	if err := os.RemoveAll(dst); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(dst, "package.json"), devShellPackageJSON(), 0o644); err != nil {
+		return "", err
+	}
+	_ = clearObsolete(base, DevShellExtID)
+	if err := registerExtensionsJSON(base, dst, DevShellExtID, DevShellVersion, DevShellFolderName()); err != nil {
+		logx.Warnf("dev shell register json: %v", err)
+	}
+	logx.Infof("dev shell installed: %s", dst)
+	return dst, nil
+}
+
+// EnableDevShell 启用扩展壳（清 .obsolete 标记）。
+func EnableDevShell() error {
+	base := UserExtensionsDir()
+	if base == "" {
+		return nil
+	}
+	return clearObsolete(base, DevShellExtID)
+}
+
+// DisableDevShell 禁用扩展壳（写 .obsolete，不删文件便于再启）。
+func DisableDevShell() error {
+	base := UserExtensionsDir()
+	if base == "" {
+		return nil
+	}
+	return setObsolete(base, DevShellExtID, true)
+}
+
+// UninstallDevShell 完全移除扩展壳。
+func UninstallDevShell() error {
+	base := UserExtensionsDir()
+	if base == "" {
+		return nil
+	}
+	_ = setObsolete(base, DevShellExtID, true)
+	_ = os.RemoveAll(filepath.Join(base, DevShellFolderName()))
+	_ = unregisterExtensionsJSON(base, DevShellExtID)
+	return nil
+}
+
+// IsDevShellInstalled 扩展壳目录是否存在。
+func IsDevShellInstalled() bool {
+	base := UserExtensionsDir()
+	if base == "" {
+		return false
+	}
+	st, err := os.Stat(filepath.Join(base, DevShellFolderName()))
+	return err == nil && st.IsDir()
 }
 
 // Disable 停止服务时禁用扩展（写入 .obsolete，不删文件便于再启）。
@@ -126,7 +224,7 @@ func Uninstall() error {
 	_ = setObsolete(base, ExtID, true)
 	dst := filepath.Join(base, FolderName())
 	_ = os.RemoveAll(dst)
-	_ = unregisterExtensionsJSON(base)
+	_ = unregisterExtensionsJSON(base, ExtID)
 	return nil
 }
 
@@ -194,7 +292,7 @@ type extJSONEntry struct {
 	Metadata         map[string]any `json:"metadata"`
 }
 
-func registerExtensionsJSON(base, absDir string) error {
+func registerExtensionsJSON(base, absDir, id, version, folder string) error {
 	p := filepath.Join(base, "extensions.json")
 	var list []extJSONEntry
 	if b, err := os.ReadFile(p); err == nil && len(b) > 0 {
@@ -206,22 +304,22 @@ func registerExtensionsJSON(base, absDir string) error {
 		loc = "/" + strings.ToLower(loc[:1]) + loc[1:]
 	}
 	entry := extJSONEntry{
-		Version:          Version,
-		RelativeLocation: FolderName(),
+		Version:          version,
+		RelativeLocation: folder,
 		Metadata: map[string]any{
 			"installedTimestamp": time.Now().UnixMilli(),
 			"pinned":             true,
 			"source":             "vsix",
 		},
 	}
-	entry.Identifier.ID = ExtID
+	entry.Identifier.ID = id
 	entry.Location.Mid = 1
 	entry.Location.Path = loc
 	entry.Location.Scheme = "file"
 
 	out := make([]extJSONEntry, 0, len(list)+1)
 	for _, e := range list {
-		if strings.EqualFold(e.Identifier.ID, ExtID) {
+		if strings.EqualFold(e.Identifier.ID, id) {
 			continue
 		}
 		out = append(out, e)
@@ -234,7 +332,7 @@ func registerExtensionsJSON(base, absDir string) error {
 	return os.WriteFile(p, raw, 0o644)
 }
 
-func unregisterExtensionsJSON(base string) error {
+func unregisterExtensionsJSON(base, id string) error {
 	p := filepath.Join(base, "extensions.json")
 	var list []extJSONEntry
 	b, err := os.ReadFile(p)
@@ -244,7 +342,7 @@ func unregisterExtensionsJSON(base string) error {
 	_ = json.Unmarshal(b, &list)
 	out := list[:0]
 	for _, e := range list {
-		if !strings.EqualFold(e.Identifier.ID, ExtID) {
+		if !strings.EqualFold(e.Identifier.ID, id) {
 			out = append(out, e)
 		}
 	}

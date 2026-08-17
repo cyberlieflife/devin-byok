@@ -258,8 +258,22 @@ func buildClientModelConfigEntry(cfg *config.File, uid, label string, entry *con
 	mi = pbwire.AppendEnum(mi, 7, apiProviderOpenAICompatibleExternal)
 	mi = pbwire.AppendString(mi, 8, uid)
 	mi = pbwire.AppendBool(mi, 9, true)
-	if cfg.Upstream.BaseURL != "" {
-		mi = pbwire.AppendString(mi, 11, cfg.Upstream.BaseURL)
+	// model_info.base_url（字段 11）必须携带模型实际可达的 provider 地址。
+	// 之前只写 legacy 全局 upstream.base_url：Family 级配置（GUI「模型」页
+	// 按 Family 卡填写的 base_url）下该字段为空，Devin LS 会判定模型 provider
+	// 不可达（"Model provider unreachable"）并把 BYOK 模型从模型列表过滤掉，
+	// 列表只剩官方模型。按 family/model/全局 逐级解析，与聊天链路 ResolveProvider
+	// 保持一致。
+	baseURL := strings.TrimSpace(cfg.Upstream.BaseURL)
+	if entry != nil && entry.ID != "" {
+		if prov, ok := cfg.ResolveProvider(entry.ID); ok && strings.TrimSpace(prov.BaseURL) != "" {
+			baseURL = strings.TrimSpace(prov.BaseURL)
+		} else if strings.TrimSpace(entry.BaseURL) != "" {
+			baseURL = strings.TrimSpace(entry.BaseURL)
+		}
+	}
+	if baseURL != "" {
+		mi = pbwire.AppendString(mi, 11, baseURL)
 	}
 	mi = pbwire.AppendString(mi, 12, uid)
 	// max_output_tokens

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -408,6 +409,21 @@ func mustInstall() {
 	if cfg, err := config.Load(cfgPath); err == nil && cfg.Devin.InstallDir != "" {
 		installDir = cfg.Devin.InstallDir
 	}
+	// macOS 签名 bundle 不可替换：改走 settings 覆盖链路（拷贝 .real 到数据
+	// 目录 + 安装 Codeium.codeium-dev 扩展壳，让 codeiumDev.* 设置生效）。
+	if runtime.GOOS == "darwin" {
+		if _, err := lsinstall.EnsureRealCopy(installDir); err != nil {
+			logx.Errorf("install real copy: %v", err)
+			os.Exit(1)
+		}
+		if _, err := extinstall.InstallDevShell(); err != nil {
+			logx.Errorf("install dev shell: %v", err)
+			os.Exit(1)
+		}
+		_ = extinstall.EnableDevShell()
+		logx.Infof("install done (darwin: real copy + dev shell); Next: devin-byok start && restart Devin")
+		return
+	}
 	meta, err := lsinstall.Install(installDir)
 	if err != nil {
 		logx.Errorf("install wrapper: %v", err)
@@ -422,6 +438,12 @@ func mustUninstall() {
 	installDir := platform.DefaultInstallDir()
 	if cfg, err := config.Load(cfgPath); err == nil && cfg.Devin.InstallDir != "" {
 		installDir = cfg.Devin.InstallDir
+	}
+	if runtime.GOOS == "darwin" {
+		_ = lsinstall.RemoveRealCopy()
+		_ = extinstall.UninstallDevShell()
+		logx.Infof("uninstall done (darwin: removed real copy + dev shell)")
+		return
 	}
 	if err := lsinstall.Uninstall(installDir); err != nil {
 		logx.Errorf("uninstall wrapper: %v", err)

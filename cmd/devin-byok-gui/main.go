@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -150,11 +151,41 @@ func main() {
 }
 
 func autoInstallWrapper() {
-	// 3.7.16 适配：不再向 Devin.app bundle 写入 wrapper（签名应用受系统保护，
-	// 且会导致 "installation appears to be corrupt"）。
-	// 改用 codeiumDev.languageServerBinaryPath 覆盖，从用户目录启动 wrapper，
-	// 由 applyFromConfig 写入 settings.json 完成。
-	logx.Infof("auto install wrapper: skipped (languageServerBinaryPath override in use)")
+	// Windows：Devin bundle 无签名保护，直接植入 wrapper 到 bundle 最可靠
+	// （3.7.16 前实测有效）。bundle 被还原或 Devin 更新覆盖后必须重新植入，
+	// 否则 Devin 回退官方语言服务器，本地模型服务收不到任何请求。
+	// macOS：签名应用受系统保护，bundle 写入会失败并触发 "installation appears
+	// to be corrupt"，只能走 codeiumDev.languageServerBinaryPath 覆盖：从
+	// bundle 拷贝真实语言服务器到数据目录 bin（.real 副本），并安装
+	// Codeium.codeium-dev 扩展壳使 hasDevExtension() 为真（否则 Devin 不会
+	// 读取 codeiumDev.* 设置），settings 注入由 ApplyLocalRuntime 完成。
+	cfg, err := config.Load(paths.FindConfig())
+	if err != nil {
+		logx.Warnf("auto install wrapper: load config: %v", err)
+		return
+	}
+	if runtime.GOOS == "windows" {
+		if _, err := lsinstall.Install(cfg.Devin.InstallDir); err != nil {
+			logx.Warnf("auto install wrapper: %v", err)
+			return
+		}
+		logx.Infof("auto install wrapper: bundle wrapper installed")
+		return
+	}
+	if runtime.GOOS == "darwin" {
+		if _, err := lsinstall.EnsureRealCopy(cfg.Devin.InstallDir); err != nil {
+			logx.Warnf("auto install wrapper: real copy: %v", err)
+			return
+		}
+		if _, err := extinstall.InstallDevShell(); err != nil {
+			logx.Warnf("auto install wrapper: dev shell: %v", err)
+			return
+		}
+		_ = extinstall.EnableDevShell()
+		logx.Infof("auto install wrapper: darwin real copy + dev shell ready")
+		return
+	}
+	logx.Infof("auto install wrapper: skipped on %s (unsupported platform)", runtime.GOOS)
 }
 
 func onTrayReady() {
@@ -221,6 +252,7 @@ func stopService() string {
 		}
 	}
 	_ = extinstall.Disable()
+	_ = extinstall.DisableDevShell()
 	_, _ = devin.RestorePortal()
 	_ = ideinject.RestoreContextUsageDonut()
 	return "ok"

@@ -362,3 +362,87 @@ features:
 		t.Fatalf("model_info.max_output_tokens(field13)=%d want 8192", miOut)
 	}
 }
+
+func TestFamilyBaseURLWrittenToModelInfo(t *testing.T) {
+	// Family 级配置（无 legacy 全局 upstream.base_url）时，model_info.base_url
+	// （字段 11）必须携带 family 的 base_url；否则 Devin LS 判定模型 provider
+	// 不可达（"Model provider unreachable"）并从模型列表过滤 BYOK 模型。
+	raw := []byte(`
+server: {host: "127.0.0.1", port: 8787}
+auth: {fake_api_key: "k"}
+upstream:
+  api_key: "x"
+  model: "m"
+  families:
+    - uid: "nine-router-byok"
+      label: "9router"
+      base_url: "https://router.example.com/v1"
+      api_key: "family-key"
+      upstream_model: "m"
+      context_window: 200000
+      max_tokens: 8192
+  models:
+    - id: "nine-router-byok-medium"
+      label: "9router Medium"
+      upstream_model: "m"
+      thinking: "medium"
+      family: "9router"
+      family_uid: "nine-router-byok"
+features:
+  enable_chat: true
+  stub_unknown_rpc: true
+`)
+	path := t.TempDir() + "/fam.yaml"
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(cfg.Upstream.BaseURL) != "" {
+		t.Fatalf("test setup should have no legacy global base_url, got %q", cfg.Upstream.BaseURL)
+	}
+	card := buildClientModelConfigFor(cfg, "nine-router-byok-medium", "9router Medium")
+	fields := pbwire.ParseFields(card)
+	found := false
+	for _, f := range fields {
+		if f.Number == 23 && f.Wire == 2 { // model_info
+			for _, sf := range pbwire.ParseFields(f.Bytes) {
+				if sf.Number == 11 && sf.Wire == 2 { // base_url
+					if string(sf.Bytes) != "https://router.example.com/v1" {
+						t.Fatalf("model_info.base_url=%q want family base_url", string(sf.Bytes))
+					}
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("model_info.base_url (field 11) missing for family-based config")
+	}
+
+	// 兼容回退：uid 不在模型列表时仍写 legacy 全局 base_url（旧行为不变）。
+	legacy := &config.File{}
+	legacy.Upstream.BaseURL = "http://localhost:8317/v1"
+	legacy.Upstream.Model = "grok-4.5"
+	legacy.Upstream.Models = []config.ModelEntry{{ID: "grok-4.5", Label: "BYOK - grok-4.5", UpstreamModel: "grok-4.5"}}
+	cardLegacy := buildClientModelConfigFor(legacy, "grok-4.5", "BYOK - grok-4.5")
+	fieldsLegacy := pbwire.ParseFields(cardLegacy)
+	foundLegacy := false
+	for _, f := range fieldsLegacy {
+		if f.Number == 23 && f.Wire == 2 {
+			for _, sf := range pbwire.ParseFields(f.Bytes) {
+				if sf.Number == 11 && sf.Wire == 2 {
+					if string(sf.Bytes) != "http://localhost:8317/v1" {
+						t.Fatalf("legacy model_info.base_url=%q want global base_url", string(sf.Bytes))
+					}
+					foundLegacy = true
+				}
+			}
+		}
+	}
+	if !foundLegacy {
+		t.Fatal("legacy model_info.base_url (field 11) missing")
+	}
+}

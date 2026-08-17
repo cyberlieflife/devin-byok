@@ -204,6 +204,65 @@ func copyFile(src, dst string) error {
 	return err
 }
 
+// realCopyDir 是 settings 覆盖链路（codeiumDev.languageServerBinaryPath）下
+// wrapper 同目录的 .real 存放目录。包级变量便于测试注入临时目录。
+var realCopyDir = func() string {
+	return filepath.Join(platform.DataDir(), "bin")
+}
+
+// RealCopyDirForTest 测试钩子：读取 realCopyDir 当前实现。
+func RealCopyDirForTest() func() string { return realCopyDir }
+
+// SetRealCopyDirForTest 测试钩子：替换 realCopyDir（测试注入临时目录，避免
+// 写入真实数据目录）。仅测试使用。
+func SetRealCopyDirForTest(f func() string) { realCopyDir = f }
+
+// EnsureRealCopy 从 Devin bundle 拷贝真实语言服务器到数据目录 bin，
+// 供 settings 覆盖链路下的 wrapper 启动。macOS 签名 bundle 受系统保护
+// 不可替换，这是唯一可行的本地启动路径；Windows 由 Install() 在 bundle 内
+// 同目录放置 .real，无需本函数。内容一致时跳过，避免无谓写盘。
+func EnsureRealCopy(installDir string) (string, error) {
+	if installDir == "" {
+		installDir = platform.DefaultInstallDir()
+	}
+	if installDir == "" {
+		return "", fmt.Errorf("cannot resolve Devin install dir")
+	}
+	bin := BinDir(installDir)
+	realName := platform.RealLanguageServerName()
+	// 源优先 bundle 内已有的 .real（历史替换残留），否则用原版语言服务器。
+	src := filepath.Join(bin, realName)
+	if _, err := os.Stat(src); err != nil {
+		src = filepath.Join(bin, platform.LanguageServerName())
+	}
+	if _, err := os.Stat(src); err != nil {
+		return "", fmt.Errorf("missing language server in bundle: %s", src)
+	}
+	dstDir := realCopyDir()
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		return "", err
+	}
+	dst := filepath.Join(dstDir, realName)
+	if b, err := os.ReadFile(dst); err == nil {
+		if s, err2 := os.ReadFile(src); err2 == nil && sha256Hex(b) == sha256Hex(s) {
+			return dst, nil
+		}
+	}
+	if err := copyFile(src, dst); err != nil {
+		return "", err
+	}
+	return dst, nil
+}
+
+// RemoveRealCopy 删除数据目录 bin 下的 .real 副本（uninstall 时还原现场）。
+func RemoveRealCopy() error {
+	dst := filepath.Join(realCopyDir(), platform.RealLanguageServerName())
+	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func sha256Hex(b []byte) string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
