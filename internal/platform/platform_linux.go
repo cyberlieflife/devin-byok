@@ -72,6 +72,10 @@ func wrapperExeName() string {
 	return "devin-byok-ls-wrapper"
 }
 
+func devinExeName() string {
+	return "devin"
+}
+
 func guiName() string {
 	return "devin-byok-gui"
 }
