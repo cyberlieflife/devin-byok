@@ -3,6 +3,20 @@
 本文件记录 devin-byok 的主要版本变更。自 v1.4.0 起，每个版本的条目使用中英双语（中文在前、英文在后）。
 This file records the major changes of devin-byok. From v1.4.0 onward, each version entry is written bilingually (Chinese first, then English).
 
+## [v1.4.2] - 2026-08-17
+
+### 修复 / Fixes
+
+- 修复 Windows 上「本地模型服务已启用但 Devin 仍走官方账号」：3.7.16 适配时停用了 bundle 植入（为 macOS 签名保护），但替代的 settings 覆盖链路（.real 拷贝 + Codeium.codeium-dev 扩展壳）未实现，Windows 一直依赖旧 bundle wrapper 残留，bundle 被还原或 Devin 更新后本地服务收不到任何请求。现在 Windows 恢复自动植入 wrapper，bundle 被还原或 Devin 更新后重新启用 GUI 即可自动恢复。
+- Fixed "local model service enabled but Devin still uses the official account" on Windows: the 3.7.16 adaptation disabled bundle injection (for macOS code signing), but the replacement settings-override path (.real copy + Codeium.codeium-dev shell) was never implemented, so Windows relied on a stale bundle wrapper; after the bundle was restored or Devin updated, the local service received no requests. Windows now re-enables automatic wrapper injection, and re-enabling the GUI after a bundle restore or Devin update restores the local path.
+- 修复 Family 级配置下模型列表只剩官方模型且聊天报 "Model provider unreachable"：下发给 Devin 的模型卡片 model_info.base_url（protobuf 字段 11）此前只写 legacy 全局 upstream.base_url，Family 卡配置的 base_url 缺失该字段，Devin 语言服务器判定 provider 不可达并过滤 BYOK 模型。现按 模型级→family 级→全局 逐级解析写入。
+- Fixed "model list keeps official models" and "Model provider unreachable" with family-based configs: model_info.base_url (protobuf field 11) previously only carried the legacy global upstream.base_url, so the family-card base_url was missing and the Devin language server treated the provider as unreachable, filtering out BYOK models. It now resolves model→family→global.
+
+### 新增 / Features
+
+- macOS 本地链路完善：自动从 Devin.app 拷贝真实语言服务器到数据目录 bin（.real 副本），并安装 Codeium.codeium-dev 扩展壳使 codeiumDev.languageServerBinaryPath 生效（签名 bundle 不可替换，macOS 唯一可行的本地启动路径）。
+- Completed the macOS local path: automatically copies the real language server from Devin.app into the data dir bin (.real copy) and installs the Codeium.codeium-dev extension shell so codeiumDev.languageServerBinaryPath takes effect (the signed bundle cannot be replaced; this is the only viable local startup path on macOS).
+
 ## [v1.4.1] - 2026-08-17
 
 ### 修复 / Fixes
