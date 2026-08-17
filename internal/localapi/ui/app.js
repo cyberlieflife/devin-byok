@@ -128,13 +128,14 @@ async function refreshMetrics(){
   }
 }
 async function refreshStatus(){
+  // 顶部状态指示灯（apiText/apiDot）统一由 refreshMetrics 管理（每 2 秒），
+  // 这里不再写指示器，避免与 metrics 轮询交替覆盖导致文字闪烁。
   try{
     const s=await jget('/api/status');
-    setDot(true,t('state.apiConsoleOnline'));
     renderServiceStatus(s);
     const cfgPath=document.getElementById('cfgPath');
     if(cfgPath) cfgPath.textContent='config: '+(s.config_path||'-');
-  }catch(e){ setDot(false,t('state.apiOffline')) }
+  }catch(e){ /* 指示器离线状态由 refreshMetrics 反映 */ }
 }
 function renderServiceStatus(s){
   const active=!!s.service_active;

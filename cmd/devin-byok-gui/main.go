@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -69,10 +70,10 @@ func main() {
 	}
 	waitAPI(80)
 
-	// 上次处于启用状态（last-apply.json 存在）：启动后自动重新启用，
-	// 免去每次打开 GUI 都需手动点击「启用并一键导入」。
-	// 用户显式「停止并恢复」会清除该标记，此后不再自动启用。
-	if _, err := os.Stat(filepath.Join(platform.DataDir(), "last-apply.json")); err == nil {
+	// 上次处于启用状态（last-apply.json 存在）或 Devin 配置仍指向本地服务：
+	// 启动后自动重新启用，免去每次打开 GUI 都需手动点击「启用并一键导入」。
+	// 用户显式「停止并恢复」会清除标记并还原 Devin 配置，此后不再自动启用。
+	if shouldAutoEnable() {
 		go func() {
 			time.Sleep(600 * time.Millisecond)
 			if err := postControl("start"); err != nil {
@@ -194,7 +195,9 @@ func onTrayReady() {
 func onTrayExit() {}
 
 func quitApp() {
-	_ = stopService()
+	// 退出 GUI 时停止内嵌服务，但保留 Devin 的 BYOK 配置（不 restore）：
+	// 这样下次打开 GUI 直接处于「已启用」状态，无需重新手动启用。
+	// 需要彻底还原 Devin 配置时，用户显式点击「停止并恢复」（restore + 清除标记）。
 	closeEmbedded()
 	systray.Quit()
 	time.Sleep(80 * time.Millisecond)
@@ -326,6 +329,32 @@ func waitAPI(n int) bool {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return online()
+}
+
+// shouldAutoEnable 判断 GUI 启动后是否需要自动恢复启用：
+// last-apply.json 存在（上次执行过启用），或 Devin settings.json 仍指向本地服务
+// （上次启用后未 restore）。两种任一成立即自动启用，避免依赖单一标记。
+func shouldAutoEnable() bool {
+	if _, err := os.Stat(filepath.Join(platform.DataDir(), "last-apply.json")); err == nil {
+		return true
+	}
+	cfg, err := config.Load(paths.FindConfig())
+	if err != nil {
+		return false
+	}
+	portal := strings.TrimRight(strings.TrimSpace(cfg.Server.PublicBase), "/")
+	if portal == "" {
+		return false
+	}
+	p, err := devin.ResolvePaths()
+	if err != nil {
+		return false
+	}
+	b, err := os.ReadFile(p.SettingsJSON)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(b), portal)
 }
 
 func setupFileLog() {
