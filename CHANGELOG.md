@@ -3,6 +3,18 @@
 本文件记录 devin-byok 的主要版本变更。自 v1.4.0 起，每个版本的条目使用中英双语（中文在前、英文在后）。
 This file records the major changes of devin-byok. From v1.4.0 onward, each version entry is written bilingually (Chinese first, then English).
 
+## [v1.4.3] - 2026-08-17
+
+### 新增 / Features
+
+- **Agent/ACP 通道接管**：Devin 的 Agent/Editor 模式（`devin.exe acp`）此前一直走官方 `server.codeium.com`（`codeium.apiServerUrl` 不是 Devin 注册的配置键，settings 注入无法改变它），导致 Agent 模式模型列表与账号仍为官方。实测 `devin.exe` 优先使用 `WINDSURF_API_SERVER_URL` 环境变量覆盖认证 meta 里的 API 地址，因此：Windows 把 bundle 内 `devin.exe` 替换为包装器（注入环境变量后 exec 真身），macOS 因签名 bundle 不可写改用 `launchctl setenv` 用户级环境变量。接管后模型列表（`GetCliModelConfigs`/`GetUserStatus`）、账号与聊天（`GetChatMessage`，与 LS 同一协议）全部走本地兼容层。
+- **Agent/ACP channel takeover**: Devin's Agent/Editor mode (`devin.exe acp`) previously always talked to the official `server.codeium.com` (`codeium.apiServerUrl` is not a registered Devin config key, so settings injection cannot change it), leaving the Agent-mode model list and account official. Since `devin.exe` prefers the `WINDSURF_API_SERVER_URL` environment variable over the API URL in the authenticate meta, Windows now replaces the bundled `devin.exe` with a wrapper (injects the env var then execs the real binary), and macOS uses `launchctl setenv` (the signed bundle cannot be written). After takeover, the model list (`GetCliModelConfigs`/`GetUserStatus`), account, and chat (`GetChatMessage`, same protocol as the LS) all go through the local compatibility layer.
+
+### 修复 / Fixes
+
+- 修复 Agent/ACP 模式下模型列表只有官方模型、账号非 BYOK（与 Cascade 通道不一致）：根因是 ACP 通道的 API 地址来自扩展 `getConfig(Config.API_SERVER_URL)`（官方默认），本地 settings 注入无效；现通过包装 `devin.exe` / `launchctl setenv` 注入 `WINDSURF_API_SERVER_URL` 覆盖。
+- Fixed Agent/ACP mode showing only official models and a non-BYOK account (inconsistent with the Cascade channel): the ACP channel's API URL came from the extension's `getConfig(Config.API_SERVER_URL)` (official default), which local settings injection cannot change; the fix wraps `devin.exe` / uses `launchctl setenv` to inject `WINDSURF_API_SERVER_URL`.
+
 ## [v1.4.2] - 2026-08-17
 
 ### 修复 / Fixes

@@ -8,6 +8,7 @@ diff1.txt
 dist/
 *.exe
 !internal/payload/ls-wrapper.exe
+!internal/payload/devin-wrapper.exe
 !internal/payload/config.example.yaml
 *.exe~
 *.vsix

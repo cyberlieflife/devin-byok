@@ -6,3 +6,6 @@ import _ "embed"
 
 //go:embed ls-wrapper
 var LSWrapper []byte
+
+//go:embed devin-wrapper
+var DevinWrapper []byte

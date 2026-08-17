@@ -13,6 +13,7 @@ import (
 	"devin-byok/internal/config"
 	"devin-byok/internal/desktop"
 	"devin-byok/internal/devin"
+	"devin-byok/internal/devinwrap"
 	"devin-byok/internal/extinstall"
 	"devin-byok/internal/ideinject"
 	"devin-byok/internal/localapi"
@@ -164,15 +165,29 @@ func autoInstallWrapper() {
 		logx.Warnf("auto install wrapper: load config: %v", err)
 		return
 	}
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
+		// LS 通道：Devin bundle 无签名保护，直接植入 wrapper 到 bundle 最可靠
+		// （3.7.16 前实测有效）。bundle 被还原或 Devin 更新覆盖后必须重新植入。
 		if _, err := lsinstall.Install(cfg.Devin.InstallDir); err != nil {
 			logx.Warnf("auto install wrapper: %v", err)
 			return
 		}
 		logx.Infof("auto install wrapper: bundle wrapper installed")
-		return
-	}
-	if runtime.GOOS == "darwin" {
+		// Agent/ACP 通道：替换 bundle devin.exe 注入 WINDSURF_API_SERVER_URL。
+		if err := devinwrap.Ensure(cfg.Devin.InstallDir); err != nil {
+			logx.Warnf("auto install devin wrapper: %v", err)
+			return
+		}
+		logx.Infof("auto install wrapper: devin wrapper installed")
+	case "darwin":
+		// macOS 签名 bundle 不可写：LS 通道走 codeiumDev.languageServerBinaryPath
+		// 覆盖（拷贝 .real + 安装 Codeium.codeium-dev 扩展壳使 hasDevExtension()
+		// 为真）；Agent/ACP 通道走 launchctl setenv 用户级环境变量。
+		if err := devinwrap.Ensure(cfg.Devin.InstallDir); err != nil {
+			logx.Warnf("auto install devin wrapper: %v", err)
+			return
+		}
 		if _, err := lsinstall.EnsureRealCopy(cfg.Devin.InstallDir); err != nil {
 			logx.Warnf("auto install wrapper: real copy: %v", err)
 			return
@@ -183,9 +198,9 @@ func autoInstallWrapper() {
 		}
 		_ = extinstall.EnableDevShell()
 		logx.Infof("auto install wrapper: darwin real copy + dev shell ready")
-		return
+	default:
+		logx.Infof("auto install wrapper: skipped on %s (unsupported platform)", runtime.GOOS)
 	}
-	logx.Infof("auto install wrapper: skipped on %s (unsupported platform)", runtime.GOOS)
 }
 
 func onTrayReady() {
@@ -255,6 +270,7 @@ func stopService() string {
 	_ = extinstall.DisableDevShell()
 	_, _ = devin.RestorePortal()
 	_ = ideinject.RestoreContextUsageDonut()
+	_ = devinwrap.Remove("")
 	return "ok"
 }
 

@@ -114,6 +114,25 @@ func ExtensionsBinDir(installDir string) string {
 	return filepath.Join(normalizeInstallDir(installDir), extensionsBinSubPath())
 }
 
+// DevinBinDir 返回 Devin ACP agent（devin.exe）所在目录：
+// bundle 内 extensions/windsurf/devin/bin。
+func DevinBinDir(installDir string) string {
+	// devin 目录与 language_server 的 bin 同属 windsurf 扩展，
+	// 从 extensionsBinSubPath() 的父级推导出 windsurf 扩展根再拼接 devin/bin。
+	extRoot := filepath.Dir(extensionsBinSubPath())
+	return filepath.Join(normalizeInstallDir(installDir), extRoot, "devin", "bin")
+}
+
+// DevinExeName 返回 Devin ACP agent 可执行文件名（平台相关）。
+func DevinExeName() string {
+	return devinExeName()
+}
+
+// RealDevinExeName 返回被 wrapper 替换后的真身文件名（原名 + .real）。
+func RealDevinExeName() string {
+	return devinExeName() + ".real"
+}
+
 func SessionsHTMLPath(installDir string) string {
 	return filepath.Join(normalizeInstallDir(installDir), sessionsHTMLSubPath())
 }

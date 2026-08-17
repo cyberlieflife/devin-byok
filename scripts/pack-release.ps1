@@ -34,15 +34,21 @@ if (Test-Path ".\config.example.yaml") {
 } elseif (-not (Test-Path ".\internal\payload\config.example.yaml")) {
   throw "missing config.example.yaml for embed payload"
 }
-# 备份跟踪的内嵌 ls-wrapper，打包结束恢复，避免交叉编译污染 git 状态（对齐 pack-release.sh）。
+# 备份跟踪的内嵌 ls-wrapper / devin-wrapper，打包结束恢复，避免交叉编译污染 git 状态（对齐 pack-release.sh）。
 $lw = ".\internal\payload\ls-wrapper.exe"
 $lwBak = "$lw.bak_$(Get-Date -Format yyyyMMdd_HHmmss)"
 if (Test-Path $lw) { Copy-Item $lw $lwBak -Force }
+$dw = ".\internal\payload\devin-wrapper.exe"
+$dwBak = "$dw.bak_$(Get-Date -Format yyyyMMdd_HHmmss)"
+if (Test-Path $dw) { Copy-Item $dw $dwBak -Force }
 
 try {
   # 编译内嵌 ls-wrapper（随 $env:GOARCH 生成对应架构的包装器）
   go build -ldflags "-s -w" -o ".\internal\payload\ls-wrapper.exe" ./cmd/ls-wrapper
   if ($LASTEXITCODE -ne 0) { throw "ls-wrapper build failed" }
+  # 编译内嵌 devin-wrapper（Agent/ACP 通道包装器）
+  go build -ldflags "-s -w" -o ".\internal\payload\devin-wrapper.exe" ./cmd/devin-wrapper
+  if ($LASTEXITCODE -ne 0) { throw "devin-wrapper build failed" }
 
   $ld = "-X devin-byok/internal/version.Version=$Version -X devin-byok/internal/version.BuildTime=$(Get-Date -Format yyyy-MM-ddTHH:mm:ss)"
   # 客户端 仅供开发调试，不打进 zip
@@ -76,5 +82,9 @@ try {
   if (Test-Path $lwBak) {
     Copy-Item $lwBak $lw -Force
     Remove-Item $lwBak -Force
+  }
+  if (Test-Path $dwBak) {
+    Copy-Item $dwBak $dw -Force
+    Remove-Item $dwBak -Force
   }
 }

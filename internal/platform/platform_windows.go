@@ -80,6 +80,10 @@ func wrapperExeName() string {
 	return "devin-byok-ls-wrapper.exe"
 }
 
+func devinExeName() string {
+	return "devin.exe"
+}
+
 func guiName() string {
 	return "devin-byok-gui.exe"
 }

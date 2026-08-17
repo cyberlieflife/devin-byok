@@ -27,16 +27,24 @@ if [ ! -f "$PAYLOAD_PATH" ]; then
   exit 1
 fi
 cp "$PAYLOAD_PATH" "$PACK_TMP/ls-wrapper"
+PAYLOAD_DEVIN="$ROOT/internal/payload/devin-wrapper"
+if [ ! -f "$PAYLOAD_DEVIN" ]; then
+  echo "missing macOS devin payload: $PAYLOAD_DEVIN" >&2
+  exit 1
+fi
+cp "$PAYLOAD_DEVIN" "$PACK_TMP/devin-wrapper"
 cleanup() {
   cp "$PACK_TMP/ls-wrapper" "$PAYLOAD_PATH"
+  cp "$PACK_TMP/devin-wrapper" "$PAYLOAD_DEVIN"
   rm -rf "$PACK_TMP"
 }
 trap cleanup EXIT
 
 echo "Building self-contained macOS app release $VERSION for darwin-$GOARCH..."
 
-# Build ls-wrapper for embedding
+# Build ls-wrapper / devin-wrapper for embedding
 GOOS=darwin GOARCH="$GOARCH" go build -ldflags "-s -w" -o "$PAYLOAD_PATH" "$ROOT/cmd/ls-wrapper"
+GOOS=darwin GOARCH="$GOARCH" go build -ldflags "-s -w" -o "$PAYLOAD_DEVIN" "$ROOT/cmd/devin-wrapper"
 
 LD_FLAGS="-X devin-byok/internal/version.Version=$VERSION -X devin-byok/internal/version.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%S)"
 

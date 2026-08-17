@@ -16,6 +16,7 @@ import (
 	"devin-byok/internal/config"
 	"devin-byok/internal/desktop"
 	"devin-byok/internal/devin"
+	"devin-byok/internal/devinwrap"
 	"devin-byok/internal/extinstall"
 	"devin-byok/internal/localapi"
 	"devin-byok/internal/logx"
@@ -409,9 +410,18 @@ func mustInstall() {
 	if cfg, err := config.Load(cfgPath); err == nil && cfg.Devin.InstallDir != "" {
 		installDir = cfg.Devin.InstallDir
 	}
-	// macOS 签名 bundle 不可替换：改走 settings 覆盖链路（拷贝 .real 到数据
-	// 目录 + 安装 Codeium.codeium-dev 扩展壳，让 codeiumDev.* 设置生效）。
-	if runtime.GOOS == "darwin" {
+	// 平台分支：
+	//   Windows：bundle 无签名保护，LS 通道植入 wrapper，Agent/ACP 通道
+	//     替换 devin.exe（注入 WINDSURF_API_SERVER_URL）。
+	//   macOS：签名 bundle 不可替换，LS 通道走 settings 覆盖（拷贝 .real +
+	//     Codeium.codeium-dev 扩展壳），Agent/ACP 通道走 launchctl setenv。
+	switch runtime.GOOS {
+	case "windows":
+		if _, err := lsinstall.Install(installDir); err != nil {
+			logx.Errorf("install wrapper: %v", err)
+			os.Exit(1)
+		}
+	case "darwin":
 		if _, err := lsinstall.EnsureRealCopy(installDir); err != nil {
 			logx.Errorf("install real copy: %v", err)
 			os.Exit(1)
@@ -421,15 +431,12 @@ func mustInstall() {
 			os.Exit(1)
 		}
 		_ = extinstall.EnableDevShell()
-		logx.Infof("install done (darwin: real copy + dev shell); Next: devin-byok start && restart Devin")
-		return
 	}
-	meta, err := lsinstall.Install(installDir)
-	if err != nil {
-		logx.Errorf("install wrapper: %v", err)
+	if err := devinwrap.Ensure(installDir); err != nil {
+		logx.Errorf("install devin wrapper: %v", err)
 		os.Exit(1)
 	}
-	logx.Infof("install done target=%s real=%s", meta.Target, meta.Real)
+	logx.Infof("install done target=%s", installDir)
 	logx.Infof("Next: devin-byok start && restart Devin")
 }
 
@@ -443,11 +450,16 @@ func mustUninstall() {
 		_ = lsinstall.RemoveRealCopy()
 		_ = extinstall.UninstallDevShell()
 		logx.Infof("uninstall done (darwin: removed real copy + dev shell)")
-		return
 	}
-	if err := lsinstall.Uninstall(installDir); err != nil {
-		logx.Errorf("uninstall wrapper: %v", err)
+	if err := devinwrap.Remove(installDir); err != nil {
+		logx.Errorf("uninstall devin wrapper: %v", err)
 		os.Exit(1)
+	}
+	if runtime.GOOS == "windows" {
+		if err := lsinstall.Uninstall(installDir); err != nil {
+			logx.Errorf("uninstall wrapper: %v", err)
+			os.Exit(1)
+		}
 	}
 	logx.Infof("uninstall done")
 }
