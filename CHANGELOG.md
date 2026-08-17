@@ -1,42 +1,54 @@
-# 更新日志
+# 更新日志 / Changelog
 
-本文件记录 devin-byok 的主要版本变更。
+本文件记录 devin-byok 的主要版本变更。自 v1.4.0 起，每个版本的条目使用中英双语（中文在前、英文在后）。
+This file records the major changes of devin-byok. From v1.4.0 onward, each version entry is written bilingually (Chinese first, then English).
 
 ## [v1.4.1] - 2026-08-17
 
-### 修复
+### 修复 / Fixes
 
 - 修复「本地模型服务已启用但界面仍显示未启用」：启用时写入 Devin 设置的键集合与状态检查不一致（状态检查多出一个从不写入的 `security.workspace.trust.enabled`），导致导入状态永远判定为未导入（v1.3.0 引入）。
+- Fixed "local model service enabled but UI still shows disabled": the settings keys written on enable and those checked by the status endpoint differed (the check included `security.workspace.trust.enabled`, which was never written), so the import state was always judged as not imported (introduced in v1.3.0).
 - 修复 Windows 上启动与操作时闪现的终端窗口：子进程（taskkill / tasklist / cmd）启动时隐藏控制台窗口。
+- Fixed flickering console windows on Windows startup and actions: child processes (taskkill / tasklist / cmd) now start with the console window hidden.
 - 页头 Logo 更换为与窗口一致的图标（此前为占位图标）。
+- The header logo now matches the window icon (previously a placeholder icon).
 
-### 新增
+### 新增 / Features
 
 - 恢复底栏「赞赏支持」按钮（v1.3.0 重写界面时被移除），点击弹出赞赏二维码弹窗。
+- Restored the "Support" button in the footer (removed when the UI was rewritten in v1.3.0); clicking it opens the donation QR modal.
 - **启用状态持久化**：启用过一次后，每次打开 GUI 自动恢复启用状态，无需再次手动点击「启用并一键导入」；显式点击「停止并恢复」后才彻底停止（下次启动不再自动启用）。
+- **Persistent enable state**: after enabling once, the GUI automatically restores the enabled state on every launch without clicking "Enable & Import" again; only explicitly clicking "Stop & Restore" fully stops it (no auto-enable on the next launch).
 
 ## [v1.4.0] - 2026-08-16
 
-### 新增
+### 新增 / Features
 
 - **英文界面支持**：Web 控制台（监控 / 模型 / 提示词 / 设置）完整中英双语，默认跟随浏览器/系统语言；页头常驻「中 / EN」按钮随时切换，选择持久化到浏览器本地（localStorage）。
+- **English UI support**: the Web console (Monitor / Models / Prompts / Settings) is fully bilingual; it follows the browser/system language by default, and a persistent "中 / EN" button in the header switches anytime, persisted to browser localStorage.
 - 服务端管理 API 消息按请求语言返回（`X-Lang` / `Accept-Language`，缺省中文保持向后兼容）；更新弹窗按界面语言优先展示对应语言的版本说明。
+- Server admin API messages are returned in the request language (`X-Lang` / `Accept-Language`, defaulting to Chinese for backward compatibility); the update modal prefers the version notes matching the UI language.
 
-### 修复
+### 修复 / Fixes
 
 - 升级时若新配置目录已存在"示例模板"（含占位域名 `api.example.com`），历史位置（`~/.devin-byok`）的用户配置此前不会被迁移，导致界面加载示例配置；现检测示例占位并自动迁移历史用户配置。
+- On upgrade, if the new config directory already contained an example template (with placeholder domain `api.example.com`), the user config at the legacy location (`~/.devin-byok`) was not migrated, so the UI loaded the example config; the app now detects example placeholders and automatically migrates the legacy user config.
 - WebView/浏览器缓存旧静态资源导致界面显示旧版（版本号、按钮、模型列表异常）；UI 静态资源 URL 增加版本查询参数强制重新加载。
+- WebView/browser caching of old static assets showed a stale UI (version, buttons, model list); static asset URLs now carry a version query parameter to force reload.
 
-### 工程与测试
+### 工程与测试 / Engineering & Testing
 
 - 新增前端 i18n 一致性校验脚本（`scripts/check-i18n.mjs`：字典对称、HTML/JS 引用覆盖、界面中文残留、服务端 uiMsg key 校验）与前端运行时单测（`scripts/test-i18n.mjs`：语言解析矩阵、切换链路、DOM 应用路径），并接入 CI 三平台门禁。
+- Added a frontend i18n consistency check (`scripts/check-i18n.mjs`: dictionary symmetry, HTML/JS reference coverage, UI Chinese residue, server uiMsg key check) and runtime tests (`scripts/test-i18n.mjs`: language resolution matrix, switch flow, DOM application paths), wired into the CI three-platform gate.
 - 语言切换后动态区域、页头版本副标题与页脚更新状态即时以新语言重渲染；模型家族卡片的编辑/复制/删除操作修复（按钮事件绑定）。
+- Dynamic regions, the header version subtitle and footer update state re-render immediately in the new language on switch; family card edit/copy/delete actions fixed (button event binding).
 
-### 平台支持
+### 平台支持 / Platform Support
 
-- Windows（官方发布物，.exe，amd64/arm64）
-- macOS（官方发布物，.dmg，arm64/amd64）
-- Linux（开发/CI 辅助支持，源码构建）
+- Windows（官方发布物，.exe，amd64/arm64） / Windows (official builds, .exe, amd64/arm64)
+- macOS（官方发布物，.dmg，arm64/amd64） / macOS (official builds, .dmg, arm64/amd64)
+- Linux（开发/CI 辅助支持，源码构建） / Linux (dev/CI auxiliary support, source builds)
 
 ## [v1.3.2] - 2026-08-16
 
